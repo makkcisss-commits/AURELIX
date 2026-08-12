@@ -100,6 +100,24 @@ jobs:
           curl --fail --silent \
             -H 'X-AURELIX-SECRET: ci-smoke-secret' \
             http://127.0.0.1:18000/ready
+      - name: Verify authenticated control snapshot
+        run: |
+          curl --fail --silent \
+            -H 'X-AURELIX-SECRET: ci-smoke-secret' \
+            http://127.0.0.1:18000/v1/control/snapshot > /tmp/snapshot.json
+          python - <<'PY'
+          import json
+          payload = json.load(open('/tmp/snapshot.json'))
+          assert 'runtime' in payload
+          assert 'providers' in payload
+          assert 'experiments' in payload
+          assert 'knowledge' in payload
+          assert 'audit_events' in payload
+          print(json.dumps(payload, indent=2))
+          PY
+      - name: Verify unauthenticated control plane is rejected
+        run: |
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18000/v1/control/snapshot)" = "401"
       - name: Stop container
         if: always()
         run: docker stop aurelix-ci || true
