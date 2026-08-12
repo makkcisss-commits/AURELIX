@@ -16,7 +16,7 @@
         <h1>AURELIX</h1>
         <p>Intelligence, governance and execution under one owner-controlled system.</p>
       </div>
-      <div class="system-pill"><span class="dot"></span> SYSTEM <strong id="system-state">HEALTHY</strong></div>
+      <div class="system-pill"><span class="dot"></span> SYSTEM <strong id="system-state">LOCKED</strong></div>
     </header>
 
     <section class="governor-hero" aria-labelledby="governor-title">
@@ -25,37 +25,52 @@
         <h2 id="governor-title">Authority is centralized.</h2>
         <p>Agents may research, propose and build. Protected execution remains subject to policy, scope, budget and owner approval.</p>
       </div>
-      <div class="governor-state"><span class="dot"></span><strong id="governor-state">OPERATIONAL</strong><small>All control gates available</small></div>
+      <div class="governor-state"><span class="dot"></span><strong id="governor-state">LOCKED</strong><small id="connection-state">AUTHENTICATION REQUIRED</small></div>
+    </section>
+
+    <section class="panel" aria-label="Owner authentication">
+      <div class="panel-head"><h3>Owner access</h3><span>READ ONLY</span></div>
+      <form id="access-form" class="decision">
+        <div>
+          <label for="owner-secret"><b>Owner secret</b></label>
+          <small>Used only for this browser session to read the protected control API.</small>
+        </div>
+        <input id="owner-secret" name="owner-secret" type="password" autocomplete="current-password" placeholder="AURELIX_OWNER_SECRET" required>
+        <button type="submit">Connect</button>
+      </form>
     </section>
 
     <section class="grid" aria-label="System status">
-      <article class="card status-card"><span class="dot"></span><div><b>Policy</b><small id="policy-state">ACTIVE</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Audit</b><small id="audit-state">RECORDING</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Private API</b><small id="api-state">PROTECTED</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Execution</b><small id="execution-state">GUARDED</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Budget Guard</b><small id="budget-state">ACTIVE</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Circuit Breaker</b><small id="breaker-state">READY</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Policy</b><small id="policy-state">—</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Audit</b><small id="audit-state">—</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Private API</b><small id="api-state">—</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Execution</b><small id="execution-state">—</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Budget Guard</b><small id="budget-state">—</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Circuit Breaker</b><small id="breaker-state">—</small></div></article>
     </section>
 
     <section class="two-column">
       <article class="panel">
-        <div class="panel-head"><h3>Decisions requiring owner</h3><span class="count">2</span></div>
-        <div class="decision"><div><b>Approval #001</b><small>Financial request · EUR 49.00</small></div><span class="pending">PENDING</span></div>
-        <div class="decision"><div><b>Change #002</b><small>Production configuration</small></div><span class="pending">PENDING</span></div>
-        <p class="muted">No action is executed from this display. Approval requests are sent through the authenticated Private API and Governor.</p>
+        <div class="panel-head"><h3>Live runtime</h3><span class="live"><span class="dot"></span> LIVE</span></div>
+        <div class="decision"><div><b>Experiments</b><small>Active / completed</small></div><strong><span id="experiment-active">0</span> / <span id="experiment-completed">0</span></strong></div>
+        <div class="decision"><div><b>Total experiments</b><small>Durable runtime state</small></div><strong id="experiment-total">0</strong></div>
+        <div class="decision"><div><b>Knowledge items</b><small id="knowledge-backend">unknown</small></div><strong id="knowledge-total">0</strong></div>
       </article>
 
       <article class="panel">
-        <div class="panel-head"><h3>Recent activity</h3><span class="live"><span class="dot"></span> LIVE</span></div>
-        <ul class="activity">
-          <li><span class="dot"></span><div><b>Governor decision completed</b><small>policy check · just now</small></div></li>
-          <li><span class="dot"></span><div><b>Research task completed</b><small>research-agent · 2 min ago</small></div></li>
-          <li><span class="dot"></span><div><b>Audit event recorded</b><small>control-plane · 3 min ago</small></div></li>
-        </ul>
+        <div class="panel-head"><h3>Providers</h3><span class="live"><span class="dot"></span> CONFIG</span></div>
+        <div class="decision"><div><b>Model provider</b><small>Governed generation backend</small></div><span id="model-provider">—</span></div>
+        <div class="decision"><div><b>Research provider</b><small>Evidence acquisition backend</small></div><span id="research-provider">—</span></div>
+        <p class="muted">This dashboard reports configuration and read-only state. It does not execute protected actions.</p>
       </article>
     </section>
 
-    <footer>PRIVATE SYSTEM · AURELIX · v0.1 · CONTROLLED ACCESS</footer>
+    <section class="panel">
+      <div class="panel-head"><h3>Recent audit activity</h3><span class="live"><span class="dot"></span> LIVE</span></div>
+      <ul id="activity" class="activity"><li>Authenticate to load live events.</li></ul>
+    </section>
+
+    <footer>PRIVATE SYSTEM · AURELIX · v0.2 · CONTROLLED ACCESS</footer>
   </main>
   <script src="./api.js" defer></script>
   <script src="./app.js" defer></script>
