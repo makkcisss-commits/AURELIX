@@ -26,7 +26,7 @@ class ProvenanceLedger:
         self._records: Dict[str, ProvenanceRecord] = {}
 
     def append(self, kind: str, subject_id: str, parent_ids: List[str] | None = None, **metadata: str) -> ProvenanceRecord:
-        record = ProvenanceRecord(str(uuid4()), kind, subject_id, parent_ids or [], metadata)
+        record = ProvenanceRecord(str(uuid4()), kind, subject_id, list(parent_ids or []), metadata)
         self._records[record.record_id] = record
         return record
 
@@ -34,17 +34,20 @@ class ProvenanceLedger:
         return [r for r in self._records.values() if r.subject_id == subject_id]
 
     def lineage(self, subject_id: str) -> List[ProvenanceRecord]:
+        """Return records for the subject and recursively for parent subjects."""
         result: List[ProvenanceRecord] = []
-        seen: set[str] = set()
-        pending = [r.record_id for r in self.for_subject(subject_id)]
-        while pending:
-            rid = pending.pop()
-            if rid in seen:
+        seen_records: set[str] = set()
+        pending_subjects = [subject_id]
+        seen_subjects: set[str] = set()
+        while pending_subjects:
+            current = pending_subjects.pop()
+            if current in seen_subjects:
                 continue
-            seen.add(rid)
-            record = self._records.get(rid)
-            if record is None:
-                continue
-            result.append(record)
-            pending.extend(record.parent_ids)
+            seen_subjects.add(current)
+            for record in self.for_subject(current):
+                if record.record_id in seen_records:
+                    continue
+                seen_records.add(record.record_id)
+                result.append(record)
+                pending_subjects.extend(record.parent_ids)
         return result
