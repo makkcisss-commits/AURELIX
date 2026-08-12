@@ -40,3 +40,6 @@ class RevenueEngine:
     def total_for_activity(self, activity_id: str) -> Decimal:
         return sum((r.amount_eur for r in self._records.values()
                     if r.activity_id == activity_id), Decimal("0"))
+
+    def total_all(self) -> Decimal:
+        return sum((r.amount_eur for r in self._records.values()), Decimal("0"))
