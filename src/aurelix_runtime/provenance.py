@@ -57,6 +57,20 @@ class ProvenanceLedger:
                 if parent is not None:
                     pending_records.append(parent)
                     continue
-                pending_records.extend(self.for_subject(parent_id))
+
+                parents_by_subject = self.for_subject(parent_id)
+                if parents_by_subject:
+                    pending_records.extend(parents_by_subject)
+                    continue
+
+                # A subject can be referenced as evidence by another record
+                # without being the direct parent subject. Follow that shared
+                # provenance edge so lineage can recover the originating
+                # research/evidence record as well.
+                pending_records.extend(
+                    candidate
+                    for candidate in self._records.values()
+                    if parent_id in candidate.parent_ids
+                )
 
         return result
