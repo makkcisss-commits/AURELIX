@@ -50,15 +50,12 @@ class ControlCenter:
             if all(component.state is HealthState.HEALTHY for component in components)
             else HealthState.ATTENTION
         )
-        treasury = self.treasury.snapshot()
-        total_revenue = sum(
-            (record.amount_eur for record in self.revenue._records.values()),
-            treasury.free_eur * 0,
-        )
+        treasury_snapshot = self.treasury.snapshot()
+        total_revenue = self.revenue.total_all()
         return ControlCenterSnapshot(
             system=system,
             components=tuple(components),
-            treasury_free_eur=str(treasury.free_eur),
+            treasury_free_eur=str(treasury_snapshot.free_eur),
             revenue_total_eur=str(total_revenue),
         )
 
