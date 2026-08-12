@@ -8,7 +8,7 @@ class BudgetExceeded(Exception):
     """Raised when an operation would exceed its authorized budget."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class Budget:
     currency: str
     limit: Decimal
