@@ -1,14 +1,20 @@
 from decimal import Decimal
 
 from aurelix_core.approvals import OwnerApproval, apply_owner_approval
-from aurelix_core.models import ActionClass, DecisionRequest, DecisionStatus
+from aurelix_core.models import ActionClass, Actor, DecisionRequest, DecisionStatus
+
+
+def make_request(amount: str) -> DecisionRequest:
+    return DecisionRequest(
+        actor=Actor(id="test", role="tester"),
+        action=ActionClass.FINANCIAL,
+        reason="test approval",
+        payload={"amount": amount},
+    )
 
 
 def test_scoped_owner_approval_allows_matching_financial_request() -> None:
-    request = DecisionRequest(
-        action=ActionClass.FINANCIAL,
-        payload={"amount": "49.00"},
-    )
+    request = make_request("49.00")
     approval = OwnerApproval(
         request_id=request.id,
         owner_id="owner",
@@ -21,10 +27,7 @@ def test_scoped_owner_approval_allows_matching_financial_request() -> None:
 
 
 def test_approval_cannot_authorize_more_than_its_scope() -> None:
-    request = DecisionRequest(
-        action=ActionClass.FINANCIAL,
-        payload={"amount": "100.00"},
-    )
+    request = make_request("100.00")
     approval = OwnerApproval(
         request_id=request.id,
         owner_id="owner",
