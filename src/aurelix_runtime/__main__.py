@@ -4,6 +4,9 @@ import argparse
 import os
 
 from .http import serve_private_control
+from .integrated_engines import ResearchEngine
+from .pipeline_runner import GovernedPipeline
+from .research_provider import HttpResearchProvider
 from .runtime import AurelixRuntime, RuntimeConfig
 
 
@@ -14,7 +17,9 @@ def main() -> None:
     args = parser.parse_args()
 
     runtime = AurelixRuntime(RuntimeConfig(database_path=args.db))
-    runtime.register_pipeline()
+    provider = HttpResearchProvider.from_env()
+    pipeline = GovernedPipeline(research_engine=ResearchEngine(provider=provider))
+    runtime.register_pipeline(pipeline)
     if args.control:
         server = serve_private_control(runtime)
         server.serve_forever()
