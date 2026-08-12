@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 
-from .runtime import AurelixRuntime, RuntimeConfig
 from .http import serve_private_control
+from .runtime import AurelixRuntime, RuntimeConfig
 
 
 def main() -> None:
@@ -14,6 +14,7 @@ def main() -> None:
     args = parser.parse_args()
 
     runtime = AurelixRuntime(RuntimeConfig(database_path=args.db))
+    runtime.register_pipeline()
     if args.control:
         server = serve_private_control(runtime)
         server.serve_forever()
