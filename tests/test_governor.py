@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from aurelix_core.approvals import OwnerApproval
 from aurelix_core.governor import Governor
 from aurelix_core.models import ActionClass, Actor, AutonomyLevel, DecisionStatus, DecisionRequest
 
@@ -29,3 +32,24 @@ def test_low_autonomy_cannot_build() -> None:
     )
     assert decision.allowed is False
     assert decision.status is DecisionStatus.REJECTED
+
+
+def test_governor_can_apply_scoped_owner_approval() -> None:
+    actor = Actor(id="treasury-agent", role="treasury", autonomy=AutonomyLevel.A3)
+    request = DecisionRequest(
+        actor=actor,
+        action=ActionClass.FINANCIAL,
+        reason="Request API budget.",
+        payload={"amount": "49.00", "currency": "EUR"},
+    )
+    governor = Governor()
+    approval = OwnerApproval(
+        request_id=request.id,
+        owner_id="owner",
+        scope="API budget",
+        max_amount=Decimal("50.00"),
+    )
+    decision = governor.authorize_with_owner_approval(request, approval)
+    assert decision.allowed is True
+    assert decision.status is DecisionStatus.APPROVED
+    assert governor.audit.all()[-1].event_type == "decision.owner_authorized"
