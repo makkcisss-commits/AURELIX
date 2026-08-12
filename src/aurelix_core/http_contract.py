@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -11,7 +12,14 @@ class ApiResponse:
 
 
 def health_response() -> ApiResponse:
-    return ApiResponse(200, {"status": "ok", "service": "aurelix-private-api"})
+    return ApiResponse(
+        200,
+        {
+            "status": "ok",
+            "service": "aurelix-private-api",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 def readiness_response(ready: bool) -> ApiResponse:
