@@ -36,7 +36,7 @@ def test_model_gateway_records_failed_generation():
     events = []
     gateway = GovernedModelGateway(
         FailingProvider(),
-        audit=lambda event, **metadata: events.append((event, metadata["error"])),
+        audit=lambda event, **metadata: events.append((event, metadata.get("error"))),
     )
     try:
         gateway.generate(GenerationRequest("hello"))
@@ -44,9 +44,8 @@ def test_model_gateway_records_failed_generation():
         assert str(exc) == "provider exploded"
     else:
         raise AssertionError("expected provider failure")
-    assert events[0][0] == "model.generation.requested"
-    assert events[1][0] == "model.generation.failed"
-    assert events[1][1] == "provider exploded"
+    assert events[0] == ("model.generation.requested", None)
+    assert events[1] == ("model.generation.failed", "provider exploded")
 
 
 def test_evaluation_fails_closed_without_measurement():
