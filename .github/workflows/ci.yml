@@ -16,7 +16,7 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -52,7 +52,7 @@ jobs:
       AURELIX_DATABASE_URL: postgresql://aurelix:aurelix@127.0.0.1:5432/aurelix
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
       - name: Build container
         run: docker build --tag aurelix:ci .
       - name: Start container
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
       - name: Validate production Compose
         env:
           AURELIX_DOMAIN: example.test
@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
       - name: Validate browser JavaScript syntax
         run: |
           for file in web/*.js; do
