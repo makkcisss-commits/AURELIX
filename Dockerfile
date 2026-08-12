@@ -7,15 +7,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt pyproject.toml ./
+COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir -r requirements.txt \
-    && python -m pip install --no-cache-dir .
+    && python -m pip install --no-cache-dir -r requirements.txt
 
+COPY pyproject.toml ./
 COPY src ./src
 COPY web ./web
 
-RUN mkdir -p /app/data
+RUN python -m pip install --no-cache-dir . \
+    && mkdir -p /app/data
 
 EXPOSE 8000
 
