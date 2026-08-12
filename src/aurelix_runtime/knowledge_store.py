@@ -1,9 +1,4 @@
-"""Durable knowledge repository boundary for AURELIX.
-
-The default implementation is process-local for portability; production
-storage is injected through the repository interface and can be backed by a
-transactional database.
-"""
+"""Durable knowledge repository boundary for AURELIX."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +24,9 @@ class KnowledgeRepository:
     def search(self, query: KnowledgeQuery) -> List[KnowledgeItem]:
         raise NotImplementedError
 
+    def count(self) -> int:
+        raise NotImplementedError
+
 
 class InMemoryKnowledgeRepository(KnowledgeRepository):
     def __init__(self) -> None:
@@ -41,10 +39,14 @@ class InMemoryKnowledgeRepository(KnowledgeRepository):
         return self._items.get(item_id)
 
     def search(self, query: KnowledgeQuery) -> List[KnowledgeItem]:
-        text = query.text.lower()
+        text = query.text.lower().strip()
         tags = set(query.tags)
         matches: Iterable[KnowledgeItem] = self._items.values()
-        matches = (x for x in matches if text in (x.title + " " + x.content).lower())
+        if text:
+            matches = (x for x in matches if text in (x.title + " " + x.content).lower())
         if tags:
             matches = (x for x in matches if tags.intersection(x.tags))
         return list(matches)[: max(0, query.limit)]
+
+    def count(self) -> int:
+        return len(self._items)
