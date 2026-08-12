@@ -59,7 +59,8 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             if query.text.strip():
                 rows = conn.execute("""
                     SELECT id,title,content,tags,evidence,created_at FROM knowledge
-                    WHERE to_tsvector('simple', title || ' ' || content) @@ plainto_tsquery('simple', %s)
+                    WHERE to_tsvector('simple', title || ' ' || content || ' ' || evidence::text)
+                          @@ plainto_tsquery('simple', %s)
                     ORDER BY created_at DESC LIMIT %s
                 """, (query.text, max(0, query.limit))).fetchall()
             else:
