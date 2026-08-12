@@ -16,7 +16,7 @@
         <h1>AURELIX</h1>
         <p>Intelligence, governance and execution under one owner-controlled system.</p>
       </div>
-      <div class="system-pill"><span class="dot"></span> SYSTEM HEALTHY</div>
+      <div class="system-pill"><span class="dot"></span> SYSTEM <strong id="system-state">HEALTHY</strong></div>
     </header>
 
     <section class="governor-hero" aria-labelledby="governor-title">
@@ -25,16 +25,16 @@
         <h2 id="governor-title">Authority is centralized.</h2>
         <p>Agents may research, propose and build. Protected execution remains subject to policy, scope, budget and owner approval.</p>
       </div>
-      <div class="governor-state"><span class="dot"></span><strong>OPERATIONAL</strong><small>All control gates available</small></div>
+      <div class="governor-state"><span class="dot"></span><strong id="governor-state">OPERATIONAL</strong><small>All control gates available</small></div>
     </section>
 
     <section class="grid" aria-label="System status">
-      <article class="card status-card"><span class="dot"></span><div><b>Policy</b><small>ACTIVE</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Audit</b><small>RECORDING</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Private API</b><small>PROTECTED</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Execution</b><small>GUARDED</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Budget Guard</b><small>ACTIVE</small></div></article>
-      <article class="card status-card"><span class="dot"></span><div><b>Circuit Breaker</b><small>READY</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Policy</b><small id="policy-state">ACTIVE</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Audit</b><small id="audit-state">RECORDING</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Private API</b><small id="api-state">PROTECTED</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Execution</b><small id="execution-state">GUARDED</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Budget Guard</b><small id="budget-state">ACTIVE</small></div></article>
+      <article class="card status-card"><span class="dot"></span><div><b>Circuit Breaker</b><small id="breaker-state">READY</small></div></article>
     </section>
 
     <section class="two-column">
@@ -57,5 +57,6 @@
 
     <footer>PRIVATE SYSTEM · AURELIX · v0.1 · CONTROLLED ACCESS</footer>
   </main>
+  <script src="./app.js" defer></script>
 </body>
 </html>
