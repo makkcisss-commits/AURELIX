@@ -26,16 +26,15 @@ class ControlPlane:
     governor: Governor
     runtime: ExecutionRuntime
     audit: AuditLog
-    breaker: CircuitBreaker
 
     @classmethod
     def create(cls, governor: Governor | None = None, audit: AuditLog | None = None) -> "ControlPlane":
         sink = audit or AuditLog()
+        runtime = ExecutionRuntime(CircuitBreaker())
         return cls(
             governor=governor or Governor(audit=sink),
-            runtime=ExecutionRuntime(CircuitBreaker()),
+            runtime=runtime,
             audit=sink,
-            breaker=CircuitBreaker(),
         )
 
     def authorize(
@@ -58,10 +57,7 @@ class ControlPlane:
                 self._blocked(decision_request.id, decision_request.actor.id, DecisionStatus.REJECTED, str(exc))
                 raise ControlPlaneDenied(str(exc)) from exc
 
-        try:
-            result = self.runtime.execute(execution_request, operation)
-        except Exception:
-            raise
+        result = self.runtime.execute(execution_request, operation)
 
         if budget is not None and estimated_cost is not None:
             budget.consume(estimated_cost)
