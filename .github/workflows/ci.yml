@@ -28,3 +28,11 @@ jobs:
           python -m pip install -r requirements.txt pytest
       - name: Run tests
         run: pytest -q
+
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build container
+        run: docker build --tag aurelix:ci .
