@@ -95,12 +95,13 @@ class RuntimeStore:
                 "running", row["attempts"] + 1,
             )
 
-    def finish(self, job_id: str, success: bool, error: str | None = None) -> None:
+    def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        status = "queued" if retry and not success else ("succeeded" if success else "failed")
         with self.lock, self.db:
             self.db.execute(
                 "UPDATE jobs SET status=?, updated_at=?, last_error=? WHERE job_id=?",
-                ("succeeded" if success else "failed", now, error, job_id),
+                (status, now, error, job_id),
             )
 
     def audit(self, event_type: str, actor: str, subject: str, outcome: str, metadata: dict) -> None:
@@ -147,7 +148,6 @@ class AurelixRuntime:
         self.handlers[kind] = handler
 
     def register_pipeline(self, pipeline: GovernedPipeline | None = None, kind: str = "pipeline.run") -> None:
-        """Register the real Research→Business governed pipeline as a runtime job."""
         governed = pipeline or GovernedPipeline()
 
         def handle(payload: dict[str, str]) -> None:
@@ -175,9 +175,11 @@ class AurelixRuntime:
             self.store.finish(job.job_id, True)
             self.store.audit("job.completed", "runtime", job.job_id, "succeeded", {"kind": job.kind})
         except Exception as exc:
-            self.store.finish(job.job_id, False, str(exc))
+            retry = job.attempts < self.config.max_attempts
+            self.store.finish(job.job_id, False, str(exc), retry=retry)
             self.store.audit(
-                "job.failed", "runtime", job.job_id, "failed",
+                "job.retry" if retry else "job.failed",
+                "runtime", job.job_id, "queued" if retry else "failed",
                 {"kind": job.kind, "error": str(exc), "attempt": job.attempts},
             )
         return True
