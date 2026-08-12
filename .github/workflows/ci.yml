@@ -36,3 +36,42 @@ jobs:
         uses: actions/checkout@v4
       - name: Build container
         run: docker build --tag aurelix:ci .
+      - name: Start container
+        run: |
+          docker run --detach --rm \
+            --name aurelix-ci \
+            -e AURELIX_OWNER_SECRET=ci-smoke-secret \
+            -p 18000:8000 \
+            aurelix:ci
+      - name: Wait for readiness
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18000/health > /tmp/health.json; then
+              cat /tmp/health.json
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs aurelix-ci
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Verify protected readiness
+        run: |
+          curl --fail --silent \
+            -H 'X-AURELIX-SECRET: ci-smoke-secret' \
+            http://127.0.0.1:18000/ready
+      - name: Stop container
+        if: always()
+        run: docker stop aurelix-ci || true
+
+  web-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate browser JavaScript syntax
+        run: |
+          for file in web/*.js; do
+            node --check "$file"
+          done
