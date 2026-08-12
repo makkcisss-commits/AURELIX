@@ -32,6 +32,8 @@ jobs:
         run: python -m compileall -q src tests
       - name: Run tests
         run: pytest -q
+      - name: Run packaged end-to-end smoke
+        run: aurelix-smoke
 
   postgres-integration:
     runs-on: ubuntu-latest
