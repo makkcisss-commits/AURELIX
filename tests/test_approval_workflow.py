@@ -2,11 +2,16 @@ from decimal import Decimal
 
 from aurelix_core.approval_workflow import ApprovalWorkflow
 from aurelix_core.audit import AuditLog
-from aurelix_core.models import ActionClass, DecisionRequest, DecisionStatus
+from aurelix_core.models import ActionClass, Actor, DecisionRequest, DecisionStatus
 
 
 def make_request(amount: str = "49") -> DecisionRequest:
-    return DecisionRequest(action=ActionClass.FINANCIAL, payload={"amount": amount})
+    return DecisionRequest(
+        actor=Actor(id="test", role="tester"),
+        action=ActionClass.FINANCIAL,
+        reason="test approval",
+        payload={"amount": amount},
+    )
 
 
 def test_submit_then_approve_records_audit_and_removes_pending() -> None:
