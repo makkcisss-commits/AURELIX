@@ -3,14 +3,17 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
 from .http_server import PrivateReadOnlyApi, ReadOnlyRequest
 from .identity import Identity, register_secret
+from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
 
@@ -30,9 +33,19 @@ _credential = register_secret(_OWNER_ID, _OWNER_SECRET) if _OWNER_SECRET else No
 try:
     _factory = EngineFactory()
     _runtime = _factory.runtime
+    _flow = IntelligenceFlow(_factory)
 except Exception:
     _factory = None
     _runtime = None
+    _flow = None
+
+
+class ResearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+
+
+class ExperimentExecutionRequest(BaseModel):
+    observations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _live_snapshot() -> dict:
@@ -142,6 +155,34 @@ def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["error"])
     return response.body
+
+
+@app.post("/v1/actions/research")
+def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    if _flow is None or _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    if _factory.research_provider is None:
+        raise HTTPException(status_code=503, detail="research_provider_not_configured")
+    try:
+        return _flow.research_to_experiment(payload.query)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"research_flow_failed: {exc}") from exc
+
+
+@app.post("/v1/actions/experiments/{experiment_id}/execute")
+def execute_experiment(
+    experiment_id: str,
+    payload: ExperimentExecutionRequest,
+    request: ReadOnlyRequest = Depends(require_owner),
+):
+    if _flow is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    try:
+        return _flow.execute_experiment(experiment_id, payload.observations)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"experiment_execution_failed: {exc}") from exc
 
 
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
