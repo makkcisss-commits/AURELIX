@@ -1,0 +1,53 @@
+"""Execution lifecycle for experiments; measurements are injected, never fabricated."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping
+
+from aurelix_core.evaluation import EvaluationEngine, EvaluationResult
+from .integrated_engines import Experiment
+
+
+@dataclass
+class ExperimentRun:
+    experiment_id: str
+    hypothesis: str
+    status: str = "setup"
+    observations: list[dict[str, Any]] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
+    evaluation: EvaluationResult | None = None
+
+
+class ExperimentRunner:
+    def __init__(self, collector: Callable[[Experiment], list[dict[str, Any]]], evaluator: EvaluationEngine | None = None):
+        self.collector = collector
+        self.evaluator = evaluator or EvaluationEngine()
+
+    def execute(self, experiment: Experiment) -> ExperimentRun:
+        run = ExperimentRun(experiment.id, experiment.hypothesis)
+        run.status = "running"
+        observations = self.collector(experiment)
+        run.observations = list(observations)
+        run.status = "measuring"
+        run.metrics = self.compute_metrics(run.observations)
+        run.status = "evaluation"
+        criteria = [c for c in experiment.success_criteria if isinstance(c, dict)]
+        run.evaluation = self.evaluator.evaluate(experiment.id, criteria, run.metrics)
+        experiment.status = "complete"
+        experiment.result = {
+            "passed": run.evaluation.passed,
+            "confidence": run.evaluation.confidence,
+            "metrics": run.metrics,
+            "reasons": list(run.evaluation.reasons),
+        }
+        run.status = "complete"
+        return run
+
+    @staticmethod
+    def compute_metrics(observations: list[dict[str, Any]]) -> dict[str, float]:
+        values: dict[str, list[float]] = {}
+        for observation in observations:
+            for key, value in observation.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    values.setdefault(str(key), []).append(float(value))
+        return {key: sum(items) / len(items) for key, items in values.items() if items}
