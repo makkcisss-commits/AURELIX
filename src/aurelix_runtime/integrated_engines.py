@@ -1,7 +1,6 @@
 """Integrated AURELIX engine implementations.
 
-These implementations are deliberately provider-agnostic. They provide a
-working end-to-end control/data flow while external model, search, payment,
+These implementations are provider-agnostic. External model, search, payment,
 and deployment providers remain explicit adapters behind policy checks.
 """
 from __future__ import annotations
@@ -38,7 +37,7 @@ class KnowledgeItem:
 class Experiment:
     id: str
     hypothesis: str
-    success_criteria: List[str]
+    success_criteria: List[dict[str, Any]]
     status: str = "proposed"
     result: Optional[Dict[str, Any]] = None
 
@@ -83,9 +82,25 @@ class ResearchEngine:
 class AcademyEngine:
     name = "academy"
 
+    def __init__(self, model_gateway=None):
+        self.model_gateway = model_gateway
+
     def run(self, research: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
         evidence = research.get("evidence", [])
         lessons = [e.claim for e in evidence if getattr(e, "verified", False)]
+        if self.model_gateway and evidence:
+            from aurelix_core.model_gateway import GenerationRequest
+            source_text = "\n".join(f"- {e.source}: {e.claim}" for e in evidence)
+            generated = self.model_gateway.generate(
+                GenerationRequest(
+                    prompt=("Synthesize the following source-backed research into concise lessons. "
+                            "Do not invent claims and explicitly preserve uncertainty.\n" + source_text),
+                    action="academy.synthesize",
+                    actor_id="academy",
+                )
+            )
+            if generated.strip():
+                lessons = [generated.strip()]
         store.record("academy.learned", lesson_count=len(lessons))
         return {"lessons": lessons, "gaps": [] if lessons else [research.get("objective", "unknown")]}
 
@@ -108,13 +123,37 @@ class KnowledgeEngine:
 class InnovationEngine:
     name = "innovation"
 
+    def __init__(self, model_gateway=None):
+        self.model_gateway = model_gateway
+
     def run(self, knowledge: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
-        proposal = {
-            "id": str(uuid4()),
-            "title": "Innovation proposal from validated knowledge",
-            "basis": knowledge.get("knowledge_id"),
-            "status": "proposal",
-        }
+        if self.model_gateway:
+            from aurelix_core.model_gateway import GenerationRequest
+            result = self.model_gateway.structured_output(
+                GenerationRequest(
+                    prompt=("Generate one conservative innovation proposal from this knowledge. "
+                            "Do not invent evidence.\n" + str(knowledge)),
+                    action="innovation.propose",
+                    actor_id="innovation",
+                ),
+                {
+                    "title": "string",
+                    "problem": "string",
+                    "proposed_solution": "string",
+                    "expected_value": "string",
+                    "estimated_cost": "number",
+                    "risk": "integer",
+                    "confidence": "number",
+                },
+            )
+            proposal = {"id": str(uuid4()), "basis": knowledge.get("knowledge_id"), **result}
+        else:
+            proposal = {
+                "id": str(uuid4()),
+                "title": "Innovation proposal from validated knowledge",
+                "basis": knowledge.get("knowledge_id"),
+                "status": "proposal",
+            }
         store.record("innovation.proposed", proposal_id=proposal["id"])
         return proposal
 
@@ -125,8 +164,8 @@ class ExperimentEngine:
     def run(self, innovation: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
         exp = Experiment(
             id=str(uuid4()),
-            hypothesis=innovation.get("title", "unknown"),
-            success_criteria=["defined", "measured", "reproducible"],
+            hypothesis=innovation.get("proposed_solution", innovation.get("title", "unknown")),
+            success_criteria=[{"metric": "success", "operator": ">=", "target": 1.0}],
         )
         store.experiments[exp.id] = exp
         store.record("experiment.proposed", experiment_id=exp.id)
@@ -137,7 +176,6 @@ class EvaluationEngine:
     name = "evaluation"
 
     def run(self, experiment: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
-        # No claim of success without actual experiment evidence.
         result = {"experiment_id": experiment["experiment_id"], "passed": False, "reason": "awaiting_execution"}
         store.record("evaluation.completed", **result)
         return result

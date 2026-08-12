@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
+from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.model_gateway import ModelProvider
-from aurelix_runtime.integrated_engines import Evidence
+from aurelix_runtime.integrated_engines import EngineStore, Evidence
 from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeQuery
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
@@ -32,7 +32,7 @@ class FakeModelProvider(ModelProvider):
 
 
 def test_research_knowledge_innovation_experiment_evaluation(tmp_path: Path):
-    runtime = AurelixRuntime(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "runtime.db"))).runtime)
+    runtime = AurelixRuntime(RuntimeConfig(database_path=str(tmp_path / "runtime.db")))
     repository = InMemoryKnowledgeRepository()
 
     def research_provider(query: str):
@@ -44,19 +44,20 @@ def test_research_knowledge_innovation_experiment_evaluation(tmp_path: Path):
         research_provider=research_provider,
         knowledge=repository,
     )
+    store = EngineStore()
 
     research = factory.research_and_store("bounded automation")
     assert len(research.evidence) == 1
     assert repository.count() == 1
     assert repository.search(KnowledgeQuery("source-backed finding", limit=10))
 
-    academy = factory.academy.run({"objective": "bounded automation", "evidence": list(research.evidence)}, factory_store := __import__("aurelix_runtime.integrated_engines", fromlist=["EngineStore"]).EngineStore())
+    academy = factory.academy.run({"objective": "bounded automation", "evidence": list(research.evidence)}, store)
     assert academy["lessons"]
 
-    knowledge = factory.knowledge_engine.run(academy, factory_store)
-    innovation = factory.innovation.run(knowledge, factory_store)
-    experiment_payload = factory.experiment.run(innovation, factory_store)
-    experiment = factory_store.experiments[experiment_payload["experiment_id"]]
+    knowledge = factory.knowledge_engine.run(academy, store)
+    innovation = factory.innovation.run(knowledge, store)
+    experiment_payload = factory.experiment.run(innovation, store)
+    experiment = store.experiments[experiment_payload["experiment_id"]]
 
     runtime.register_experiment(experiment)
     runtime.record_observation(experiment.id, {"success": 1.0})

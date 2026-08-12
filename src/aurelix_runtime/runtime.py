@@ -6,10 +6,13 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
+from .experiment_runner import ExperimentRunner
+from .integrated_engines import Experiment
 from .pipeline_runner import GovernedPipeline
+from aurelix_core.evaluation import EvaluationEngine
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,23 @@ class RuntimeStore:
             CREATE TABLE IF NOT EXISTS runtime_state (
                 key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS experiments (
+                experiment_id TEXT PRIMARY KEY,
+                hypothesis TEXT NOT NULL,
+                success_criteria TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS observations (
+                id TEXT PRIMARY KEY,
+                experiment_id TEXT NOT NULL,
+                observation TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observations_experiment
+                ON observations(experiment_id, recorded_at);
             """)
 
     def enqueue(self, kind: str, payload: dict[str, str]) -> str:
@@ -90,10 +110,7 @@ class RuntimeStore:
                 "UPDATE jobs SET status='running', attempts=attempts+1, updated_at=? WHERE job_id=?",
                 (now, row["job_id"]),
             )
-            return Job(
-                row["job_id"], row["kind"], json.loads(row["payload"]),
-                "running", row["attempts"] + 1,
-            )
+            return Job(row["job_id"], row["kind"], json.loads(row["payload"]), "running", row["attempts"] + 1)
 
     def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -108,8 +125,7 @@ class RuntimeStore:
         with self.lock, self.db:
             self.db.execute(
                 "INSERT INTO audit VALUES (?,?,?,?,?,?,?)",
-                (str(uuid4()), event_type, actor, subject, outcome, json.dumps(metadata),
-                 datetime.now(timezone.utc).isoformat()),
+                (str(uuid4()), event_type, actor, subject, outcome, json.dumps(metadata), datetime.now(timezone.utc).isoformat()),
             )
 
     def heartbeat(self) -> None:
@@ -130,6 +146,22 @@ class RuntimeStore:
                 "succeeded": counts.get("succeeded", 0),
                 "failed": counts.get("failed", 0),
             }
+
+    def audit_summary(self, limit: int = 20) -> dict[str, Any]:
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT event_type, actor, subject, outcome, metadata, created_at FROM audit ORDER BY created_at DESC LIMIT ?",
+                (max(0, limit),),
+            ).fetchall()
+        return {
+            "recent": [
+                {
+                    "event_type": row[0], "actor": row[1], "subject": row[2],
+                    "outcome": row[3], "metadata": json.loads(row[4]), "created_at": row[5],
+                }
+                for row in rows
+            ]
+        }
 
 
 class AurelixRuntime:
@@ -157,6 +189,73 @@ class AurelixRuntime:
             governed.run(objective, business_approved=False)
 
         self.register(kind, handle)
+
+    def register_experiment(self, experiment: Experiment) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.store.lock, self.store.db:
+            self.store.db.execute(
+                """INSERT INTO experiments(experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(experiment_id) DO UPDATE SET hypothesis=excluded.hypothesis,
+                   success_criteria=excluded.success_criteria, status=excluded.status,
+                   result=excluded.result, updated_at=excluded.updated_at""",
+                (experiment.id, experiment.hypothesis, json.dumps(experiment.success_criteria), experiment.status,
+                 json.dumps(experiment.result) if experiment.result is not None else None, now, now),
+            )
+
+    def record_observation(self, experiment_id: str, observation: dict[str, Any]) -> str:
+        observation_id = str(uuid4())
+        with self.store.lock, self.store.db:
+            self.store.db.execute(
+                "INSERT INTO observations(id,experiment_id,observation,recorded_at) VALUES (?,?,?,?)",
+                (observation_id, experiment_id, json.dumps(observation), datetime.now(timezone.utc).isoformat()),
+            )
+        return observation_id
+
+    def query_experiment_observations(self, experiment_id: str) -> list[dict[str, Any]]:
+        with self.store.lock:
+            rows = self.store.db.execute(
+                "SELECT observation FROM observations WHERE experiment_id=? ORDER BY recorded_at",
+                (experiment_id,),
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def query_experiments(self, status: str | None = None) -> list[dict[str, Any]]:
+        with self.store.lock:
+            if status:
+                rows = self.store.db.execute(
+                    "SELECT experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at FROM experiments WHERE status=? ORDER BY created_at DESC",
+                    (status,),
+                ).fetchall()
+            else:
+                rows = self.store.db.execute(
+                    "SELECT experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at FROM experiments ORDER BY created_at DESC"
+                ).fetchall()
+        return [
+            {
+                "experiment_id": row[0], "hypothesis": row[1], "success_criteria": json.loads(row[2]),
+                "status": row[3], "result": json.loads(row[4]) if row[4] else None,
+                "created_at": row[5], "updated_at": row[6],
+            }
+            for row in rows
+        ]
+
+    def create_experiment_runner(self) -> ExperimentRunner:
+        def collector(experiment: Experiment) -> list[dict[str, Any]]:
+            self.register_experiment(experiment)
+            return self.query_experiment_observations(experiment.id)
+
+        def on_complete(experiment: Experiment, _run) -> None:
+            self.register_experiment(experiment)
+            self.store.audit(
+                "experiment.evaluated",
+                "experiment-runner",
+                experiment.id,
+                "succeeded" if experiment.result and experiment.result.get("passed") else "evaluated",
+                experiment.result or {},
+            )
+
+        return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
         if kind not in self.handlers:

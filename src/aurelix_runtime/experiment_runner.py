@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 from aurelix_core.evaluation import EvaluationEngine, EvaluationResult
 from .integrated_engines import Experiment
@@ -19,9 +19,15 @@ class ExperimentRun:
 
 
 class ExperimentRunner:
-    def __init__(self, collector: Callable[[Experiment], list[dict[str, Any]]], evaluator: EvaluationEngine | None = None):
+    def __init__(
+        self,
+        collector: Callable[[Experiment], list[dict[str, Any]]],
+        evaluator: EvaluationEngine | None = None,
+        on_complete: Callable[[Experiment, ExperimentRun], None] | None = None,
+    ):
         self.collector = collector
         self.evaluator = evaluator or EvaluationEngine()
+        self.on_complete = on_complete
 
     def execute(self, experiment: Experiment) -> ExperimentRun:
         run = ExperimentRun(experiment.id, experiment.hypothesis)
@@ -41,6 +47,8 @@ class ExperimentRunner:
             "reasons": list(run.evaluation.reasons),
         }
         run.status = "complete"
+        if self.on_complete:
+            self.on_complete(experiment, run)
         return run
 
     @staticmethod

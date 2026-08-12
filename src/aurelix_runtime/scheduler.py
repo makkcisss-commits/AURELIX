@@ -49,7 +49,7 @@ class Scheduler:
 
     def tick(self) -> list[str]:
         processed: list[str] = []
-        runner = PipelineJobRunner(self.queue.store)
+        runner = PipelineJobRunner()
         for job in list(self.queue.jobs.values()):
             if len(processed) >= self.config.max_jobs_per_tick:
                 break

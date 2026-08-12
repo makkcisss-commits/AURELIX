@@ -57,13 +57,18 @@ class OpenAICompatibleProvider(ModelProvider):
 
     def generate(self, prompt: str, max_tokens: int = 2000) -> str:
         try:
-            r = httpx.post(f"{self.base_url}/chat/completions", json={
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-            }, headers=self._headers(), timeout=self.timeout)
-            r.raise_for_status()
-            data = r.json()
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                },
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
             return str(data["choices"][0]["message"]["content"])
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise ModelProviderError(f"model generation failed: {exc}") from exc
@@ -80,9 +85,14 @@ class OpenAICompatibleProvider(ModelProvider):
 
     def embeddings(self, text: str) -> list[float]:
         try:
-            r = httpx.post(f"{self.base_url}/embeddings", json={"model": self.model, "input": text}, headers=self._headers(), timeout=self.timeout)
-            r.raise_for_status()
-            value = r.json()["data"][0]["embedding"]
+            response = httpx.post(
+                f"{self.base_url}/embeddings",
+                json={"model": self.model, "input": text},
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            value = response.json()["data"][0]["embedding"]
             if not isinstance(value, list):
                 raise ValueError("invalid embedding")
             return [float(x) for x in value]
@@ -91,24 +101,63 @@ class OpenAICompatibleProvider(ModelProvider):
 
     def health(self) -> bool:
         try:
-            r = httpx.get(f"{self.base_url}/models", headers=self._headers(), timeout=min(self.timeout, 10.0))
-            return r.is_success
+            response = httpx.get(f"{self.base_url}/models", headers=self._headers(), timeout=min(self.timeout, 10.0))
+            return response.is_success
         except httpx.HTTPError:
             return False
 
 
 class GovernedModelGateway:
-    def __init__(self, provider: ModelProvider, policy: Callable[[GenerationRequest], bool] | None = None, audit: Callable[..., Any] | None = None):
+    def __init__(
+        self,
+        provider: ModelProvider,
+        policy: Callable[[GenerationRequest], bool] | None = None,
+        audit: Callable[..., Any] | None = None,
+    ):
         self.provider = provider
         self.policy = policy
         self.audit = audit
 
-    def generate(self, request: GenerationRequest) -> str:
+    def _authorize(self, request: GenerationRequest) -> None:
         if self.policy and not self.policy(request):
             raise ModelProviderError("model request denied by policy")
+
+    def _audit(self, event: str, request: GenerationRequest, **metadata: Any) -> None:
         if self.audit:
-            self.audit("model.generation.requested", actor_id=request.actor_id, action=request.action)
-        result = self.provider.generate(request.prompt, request.max_tokens)
-        if self.audit:
-            self.audit("model.generation.completed", actor_id=request.actor_id, action=request.action)
+            self.audit(event, actor_id=request.actor_id, action=request.action, **metadata)
+
+    def generate(self, request: GenerationRequest) -> str:
+        self._authorize(request)
+        self._audit("model.generation.requested", request)
+        try:
+            result = self.provider.generate(request.prompt, request.max_tokens)
+        except Exception as exc:
+            self._audit("model.generation.failed", request, error=str(exc))
+            raise
+        self._audit("model.generation.completed", request)
         return result
+
+    def structured_output(self, request: GenerationRequest, schema: dict[str, Any]) -> dict[str, Any]:
+        self._authorize(request)
+        self._audit("model.structured.requested", request)
+        try:
+            result = self.provider.structured_output(request.prompt, schema)
+        except Exception as exc:
+            self._audit("model.structured.failed", request, error=str(exc))
+            raise
+        self._audit("model.structured.completed", request)
+        return result
+
+    def embeddings(self, request: GenerationRequest) -> list[float]:
+        self._authorize(request)
+        self._audit("model.embedding.requested", request)
+        try:
+            result = self.provider.embeddings(request.prompt)
+        except Exception as exc:
+            self._audit("model.embedding.failed", request, error=str(exc))
+            raise
+        self._audit("model.embedding.completed", request)
+        return result
+
+    def health(self) -> bool:
+        return self.provider.health()

@@ -1,7 +1,7 @@
 """Automatic provenance wiring for Academy and Experiment learning."""
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import Iterable
 
 from .provenance import ProvenanceLedger, ProvenanceRecord
 
@@ -11,17 +11,11 @@ class LearningLedger:
         self.ledger = ledger or ProvenanceLedger()
 
     def record_research(self, research_id: str, evidence_ids: Iterable[str]) -> ProvenanceRecord:
-        record = ProvenanceRecord(research_id, "research", tuple(evidence_ids))
-        self.ledger.record(record)
-        return record
+        return self.ledger.append("research", research_id, tuple(evidence_ids))
 
     def record_evaluation(self, evaluation_id: str, experiment_id: str, evidence_ids: Iterable[str]) -> ProvenanceRecord:
         parents = (experiment_id, *tuple(evidence_ids))
-        record = ProvenanceRecord(evaluation_id, "evaluation", parents)
-        self.ledger.record(record)
-        return record
+        return self.ledger.append("evaluation", evaluation_id, parents)
 
     def record_knowledge(self, knowledge_id: str, parent_ids: Iterable[str]) -> ProvenanceRecord:
-        record = ProvenanceRecord(knowledge_id, "knowledge", tuple(parent_ids))
-        self.ledger.record(record)
-        return record
+        return self.ledger.append("knowledge", knowledge_id, tuple(parent_ids))
