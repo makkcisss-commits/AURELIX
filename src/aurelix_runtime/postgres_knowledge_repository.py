@@ -37,6 +37,7 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
                     created_at TIMESTAMPTZ NOT NULL
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_created_at ON knowledge(created_at DESC)")
 
     def put(self, item: KnowledgeItem) -> None:
         evidence = [{"source": e.source, "claim": e.claim, "confidence": e.confidence, "verified": e.verified} for e in item.evidence]
@@ -55,12 +56,23 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
 
     def search(self, query: KnowledgeQuery) -> List[KnowledgeItem]:
         with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT id,title,content,tags,evidence,created_at FROM knowledge
-                WHERE to_tsvector('simple', title || ' ' || content) @@ plainto_tsquery('simple', %s)
-                ORDER BY created_at DESC LIMIT %s
-            """, (query.text, max(0, query.limit))).fetchall()
-        return [self._from_row(row) for row in rows]
+            if query.text.strip():
+                rows = conn.execute("""
+                    SELECT id,title,content,tags,evidence,created_at FROM knowledge
+                    WHERE to_tsvector('simple', title || ' ' || content) @@ plainto_tsquery('simple', %s)
+                    ORDER BY created_at DESC LIMIT %s
+                """, (query.text, max(0, query.limit))).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id,title,content,tags,evidence,created_at FROM knowledge ORDER BY created_at DESC LIMIT %s",
+                    (max(0, query.limit),),
+                ).fetchall()
+        return [self._from_row(row) for row in rows if not query.tags or set(query.tags).intersection(row[3])]
+
+    def count(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM knowledge").fetchone()
+        return int(row[0])
 
     @staticmethod
     def _from_row(row) -> KnowledgeItem:
