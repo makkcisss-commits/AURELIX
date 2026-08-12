@@ -23,6 +23,34 @@ The repository currently includes:
 - private control-plane architecture;
 - automated tests and GitHub Actions CI.
 
+## Development / Codespaces
+
+AURELIX is a **Python/FastAPI application with a static browser UI**. It is not a Node.js application and the repository intentionally has no Node dependency tree.
+
+The Codespaces configuration installs the Python dependencies automatically. After creating or rebuilding the Codespace:
+
+```bash
+npm run dev
+```
+
+`npm run dev` is a small compatibility launcher that starts the Python FastAPI server on port `8000`; it does not install or manage Node packages.
+
+Equivalent direct command:
+
+```bash
+PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app --reload
+```
+
+For the backend package and tests:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python -m pytest
+```
+
+The server serves the `web/` control-center UI at `/` and exposes health/readiness endpoints at `/health` and `/ready`.
+
 ## Architecture
 
 ```text
