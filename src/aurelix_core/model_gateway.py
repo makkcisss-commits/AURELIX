@@ -69,19 +69,33 @@ class OpenAICompatibleProvider(ModelProvider):
             )
             response.raise_for_status()
             data = response.json()
-            return str(data["choices"][0]["message"]["content"])
+            content = data["choices"][0]["message"]["content"]
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("text")]
+                if parts:
+                    return "".join(parts)
+            raise ValueError("invalid model content")
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise ModelProviderError(f"model generation failed: {exc}") from exc
 
     def structured_output(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        raw = self.generate(prompt + "\nReturn only JSON matching this schema:\n" + json.dumps(schema), 2000)
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ModelProviderError("model returned invalid JSON") from exc
-        if not isinstance(value, dict):
-            raise ModelProviderError("model structured output must be an object")
-        return value
+        raw = self.generate(prompt + "\nReturn only JSON matching this schema:\n" + json.dumps(schema), 2000).strip()
+        candidates = [raw]
+        if raw.startswith("```"):
+            candidates.append(raw.removeprefix("```").removeprefix("json").removesuffix("```").strip())
+        start, end = raw.find("{"), raw.rfind("}")
+        if start >= 0 and end > start:
+            candidates.append(raw[start:end + 1])
+        for candidate in candidates:
+            try:
+                value = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+        raise ModelProviderError("model structured output must be valid JSON object")
 
     def embeddings(self, text: str) -> list[float]:
         try:
@@ -120,6 +134,7 @@ class GovernedModelGateway:
 
     def _authorize(self, request: GenerationRequest) -> None:
         if self.policy and not self.policy(request):
+            self._audit("model.request.denied", request)
             raise ModelProviderError("model request denied by policy")
 
     def _audit(self, event: str, request: GenerationRequest, **metadata: Any) -> None:
