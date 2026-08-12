@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .approvals import OwnerApproval, apply_owner_approval
 from .audit import AuditEvent, AuditLog
 from .models import Decision, DecisionRequest
 from .policy import PolicyEngine
@@ -28,6 +29,32 @@ class Governor:
                     "action": request.action.value,
                     "allowed": decision.allowed,
                     "requires_owner": decision.requires_owner,
+                },
+            )
+        )
+        return decision
+
+    def authorize_with_owner_approval(
+        self,
+        request: DecisionRequest,
+        approval: OwnerApproval,
+    ) -> Decision:
+        """Apply a previously authenticated, scoped owner approval.
+
+        Authentication is deliberately outside the core. This method only
+        validates the domain scope of an approval and records the result.
+        """
+        decision = apply_owner_approval(request, approval)
+        self.audit.append(
+            AuditEvent(
+                event_type="decision.owner_authorized",
+                actor_id=approval.owner_id,
+                subject_id=request.id,
+                outcome=decision.status.value,
+                metadata={
+                    "approval_id": approval.approval_id,
+                    "action": request.action.value,
+                    "allowed": decision.allowed,
                 },
             )
         )
