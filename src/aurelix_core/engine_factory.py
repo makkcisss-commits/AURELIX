@@ -34,14 +34,21 @@ class EngineFactoryConfig:
 class EngineFactory:
     """Single composition root; no engine chooses infrastructure by itself."""
 
-    def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None):
+    def __init__(
+        self,
+        config: EngineFactoryConfig | None = None,
+        runtime: AurelixRuntime | None = None,
+        model_provider: ModelProvider | None = None,
+        research_provider=None,
+        knowledge: KnowledgeRepository | None = None,
+    ):
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self.policy_engine = PolicyEngine()
-        self.model_provider = OpenAICompatibleProvider.from_env()
+        self.model_provider = model_provider if model_provider is not None else OpenAICompatibleProvider.from_env()
         self.model_gateway = self._build_model_gateway(self.model_provider)
-        self.research_provider = self._build_research_provider()
-        self.knowledge: KnowledgeRepository = self._build_knowledge_repository()
+        self.research_provider = research_provider if research_provider is not None else self._build_research_provider()
+        self.knowledge: KnowledgeRepository = knowledge or self._build_knowledge_repository()
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
