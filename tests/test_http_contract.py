@@ -1,10 +1,15 @@
+from datetime import datetime
+
 from aurelix_core.http_contract import health_response, readiness_response, safe_error_response
 
 
-def test_health_response_is_minimal() -> None:
+def test_health_response_includes_runtime_timestamp() -> None:
     response = health_response()
     assert response.status == 200
-    assert response.body == {"status": "ok", "service": "aurelix-private-api"}
+    assert response.body["status"] == "ok"
+    assert response.body["service"] == "aurelix-private-api"
+    assert "timestamp" in response.body
+    datetime.fromisoformat(response.body["timestamp"])
 
 
 def test_readiness_response_hides_internal_details() -> None:
