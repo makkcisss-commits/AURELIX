@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AURELIX Private Control Center">
+  <title>AURELIX — Control Center</title>
+  <link rel="stylesheet" href="./control-center.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PRIVATE CONTROL PLANE</p>
+        <h1>AURELIX</h1>
+        <p class="subtitle">Intelligence · Governance · Execution</p>
+      </div>
+      <div id="system-state" class="status status--pending">● CONNECTING</div>
+    </header>
+
+    <section class="governor panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">CENTRAL GOVERNOR</p>
+          <h2>Governance Core</h2>
+        </div>
+        <span id="governor-state" class="status status--pending">● CHECKING</span>
+      </div>
+      <div class="metrics">
+        <div><span>Policy</span><strong id="policy-state">—</strong></div>
+        <div><span>Audit</span><strong id="audit-state">—</strong></div>
+        <div><span>Private API</span><strong id="api-state">—</strong></div>
+        <div><span>Execution</span><strong id="execution-state">—</strong></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <p class="eyebrow">DECISIONS</p>
+        <h2>Owner Control</h2>
+        <div class="row"><span>Pending approvals</span><strong id="approval-count">—</strong></div>
+        <div class="row"><span>Budget requests</span><strong id="budget-count">—</strong></div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">ACTIVITY</p>
+        <h2>Recent Events</h2>
+        <ul id="activity" class="activity"><li>Waiting for API…</li></ul>
+      </article>
+    </section>
+
+    <footer>Private surface · Core authority remains behind the Governor</footer>
+  </main>
+  <script src="./control-center.js" defer></script>
+</body>
+</html>
