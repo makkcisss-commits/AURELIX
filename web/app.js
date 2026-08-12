@@ -13,19 +13,26 @@
   const byId = (id) => document.getElementById(id);
   const setText = (id, value) => { const node = byId(id); if (node) node.textContent = value; };
 
+  function apply(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    Object.assign(state, snapshot);
+    setText('system-state', state.system);
+    setText('governor-state', state.governor);
+    setText('policy-state', state.policy);
+    setText('audit-state', state.audit);
+    setText('api-state', state.api);
+    setText('execution-state', state.execution);
+    setText('budget-state', state.budget);
+    setText('breaker-state', state.breaker);
+  }
+
   window.AURELIX_UI = {
-    apply(snapshot) {
-      if (!snapshot || typeof snapshot !== 'object') return;
-      Object.assign(state, snapshot);
-      setText('system-state', state.system);
-      setText('governor-state', state.governor);
-      setText('policy-state', state.policy);
-      setText('audit-state', state.audit);
-      setText('api-state', state.api);
-      setText('execution-state', state.execution);
-      setText('budget-state', state.budget);
-      setText('breaker-state', state.breaker);
-    },
-    snapshot() { return { ...state }; }
+    apply,
+    snapshot() { return { ...state }; },
+    async refresh(secret) {
+      const snapshot = await window.AURELIX_API.getSnapshot(secret);
+      apply(snapshot);
+      return snapshot;
+    }
   };
 })();
