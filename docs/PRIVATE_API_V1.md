@@ -5,7 +5,7 @@ The Private API is the controlled boundary between clients and the AURELIX Contr
 ```text
 Client
   ↓
-Transport Adapter (future HTTPS server)
+HTTPS Transport Adapter
   ↓
 Private API
   ↓
@@ -18,26 +18,26 @@ Control Plane / Core
 Audit
 ```
 
-## V1 design
+## Current boundary
 
-The current implementation is intentionally framework-neutral. It authenticates an identity and dispatches only to explicitly registered operations. Unknown operations are denied.
+The framework-neutral API authenticates a caller and dispatches only explicitly registered operations. Unknown operations are denied. It does not expose arbitrary Python execution, shell commands, model-generated routes, or dynamic imports.
 
-It does not expose arbitrary Python execution, shell commands, model-generated routes, or dynamic imports.
+The HTTP contract currently provides only minimal health/readiness and safe-error primitives. This is intentional: transport wiring should be added only after authentication, authorization, input validation, rate limiting, request correlation, and secure secret handling are defined.
 
 ## Production transport requirements
 
-Before deployment, add a dedicated HTTPS transport with:
+Before deployment:
 
-- TLS;
+- HTTPS/TLS;
 - secure authentication/session mechanism;
 - request size and rate limits;
-- structured input validation;
-- authentication and authorization middleware;
-- CSRF protection where cookie-based browser sessions are used;
+- strict input validation;
+- authorization middleware;
+- CSRF protection for cookie-based browser sessions;
 - security headers;
-- request IDs and audit correlation;
+- request/correlation IDs;
 - secret redaction;
 - safe error responses;
-- health/readiness endpoints that reveal no sensitive data.
+- health/readiness endpoints with no sensitive details.
 
-The browser must never receive direct authority over core execution. The web application should call narrowly scoped API operations, and every protected operation must continue through the Control Plane gates.
+The browser must never receive direct authority over core execution. The web application calls narrowly scoped API operations, and protected operations continue through the Control Plane gates.
