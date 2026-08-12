@@ -77,11 +77,21 @@ class EngineFactory:
             return decision.allowed
 
         def audit(event: str, **metadata: Any) -> None:
+            if event.endswith(".failed"):
+                outcome = "failed"
+            elif event.endswith(".denied"):
+                outcome = "denied"
+            elif event.endswith(".requested"):
+                outcome = "requested"
+            elif event.endswith(".completed"):
+                outcome = "succeeded"
+            else:
+                outcome = "recorded"
             self.runtime.store.audit(
                 event,
                 str(metadata.get("actor_id", "system")),
                 str(metadata.get("action", "model")),
-                "ok",
+                outcome,
                 metadata,
             )
 
