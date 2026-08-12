@@ -29,15 +29,17 @@ _OWNER_ID = os.getenv("AURELIX_OWNER_ID", "owner")
 _OWNER_SECRET = os.getenv("AURELIX_OWNER_SECRET")
 _identity = Identity(_OWNER_ID, "owner")
 _credential = register_secret(_OWNER_ID, _OWNER_SECRET) if _OWNER_SECRET else None
+_factory_error: str | None = None
 
 try:
     _factory = EngineFactory()
     _runtime = _factory.runtime
     _flow = IntelligenceFlow(_factory)
-except Exception:
+except Exception as exc:
     _factory = None
     _runtime = None
     _flow = None
+    _factory_error = type(exc).__name__
 
 
 class ResearchRequest(BaseModel):
@@ -50,7 +52,11 @@ class ExperimentExecutionRequest(BaseModel):
 
 def _live_snapshot() -> dict:
     if _factory is None or _runtime is None:
-        return {**SystemSnapshot(system="DEGRADED").public(), "error": "runtime_initialization_failed"}
+        return {
+            **SystemSnapshot(system="DEGRADED").public(),
+            "error": "runtime_initialization_failed",
+            "error_type": _factory_error,
+        }
 
     runtime_status = _runtime.store.status()
     experiments = _runtime.query_experiments()
@@ -119,7 +125,8 @@ def health():
 
 @app.get("/ready", include_in_schema=False)
 def ready():
-    response = _api.get_readiness(_OWNER_SECRET is not None and _factory is not None)
+    service_ready = _OWNER_SECRET is not None and _factory is not None and _runtime is not None
+    response = _api.get_readiness(service_ready)
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["status"])
     return response.body
@@ -166,7 +173,7 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
     try:
         return _flow.research_to_experiment(payload.query)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"research_flow_failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"research_flow_failed: {type(exc).__name__}") from exc
 
 
 @app.post("/v1/actions/experiments/{experiment_id}/execute")
@@ -182,7 +189,7 @@ def execute_experiment(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"experiment_execution_failed: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"experiment_execution_failed: {type(exc).__name__}") from exc
 
 
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
