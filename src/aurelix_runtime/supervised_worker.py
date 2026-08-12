@@ -18,7 +18,7 @@ class SupervisedWorker:
     def __init__(self, queue: PersistentJobQueue, config: WorkerConfig | None = None):
         self.queue = queue
         self.config = config or WorkerConfig()
-        self.runner = PipelineJobRunner(queue.store)
+        self.runner = PipelineJobRunner()
         self.heartbeat_count = 0
 
     def heartbeat(self) -> None:
@@ -33,7 +33,11 @@ class SupervisedWorker:
                 break
             if job.status != "queued" or job.attempts >= self.config.max_attempts:
                 continue
-            self.queue.execute(job.job_id, self.runner)
+            try:
+                self.queue.execute(job.job_id, self.runner)
+            except Exception:
+                # Queue records the failure; one bad job must not stop the worker loop.
+                pass
             processed.append(job.job_id)
         return processed
 
