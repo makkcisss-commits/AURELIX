@@ -104,6 +104,31 @@ jobs:
         if: always()
         run: docker stop aurelix-ci || true
 
+  production-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate production Compose
+        env:
+          AURELIX_DOMAIN: example.test
+          AURELIX_OWNER_ID: ci-owner
+          AURELIX_OWNER_SECRET: ci-owner-secret
+          POSTGRES_PASSWORD: ci-postgres-password
+          AURELIX_MODEL_BASE_URL: https://api.openai.com/v1
+          AURELIX_MODEL_API_KEY: ci-model-key
+          AURELIX_RESEARCH_API_KEY: ci-research-key
+        run: docker compose -f deploy/production/docker-compose.yml config --quiet
+      - name: Validate Caddy configuration
+        env:
+          AURELIX_DOMAIN: example.test
+        run: |
+          docker run --rm \
+            -e AURELIX_DOMAIN \
+            -v "$PWD/deploy/production/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
   web-syntax:
     runs-on: ubuntu-latest
     steps:
