@@ -1,0 +1,4 @@
+{$AURELIX_DOMAIN} {
+    encode gzip
+    reverse_proxy aurelix:8000
+}
