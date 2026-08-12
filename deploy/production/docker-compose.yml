@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aurelix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: aurelix
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurelix -d aurelix"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  aurelix:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      AURELIX_ENV: production
+      AURELIX_LOG_LEVEL: ${AURELIX_LOG_LEVEL:-INFO}
+      AURELIX_HOST: 0.0.0.0
+      AURELIX_PORT: 8000
+      AURELIX_OWNER_ID: ${AURELIX_OWNER_ID:?set AURELIX_OWNER_ID}
+      AURELIX_OWNER_SECRET: ${AURELIX_OWNER_SECRET:?set AURELIX_OWNER_SECRET}
+      AURELIX_MODEL_BASE_URL: ${AURELIX_MODEL_BASE_URL:?set AURELIX_MODEL_BASE_URL}
+      AURELIX_MODEL_NAME: ${AURELIX_MODEL_NAME:-gpt-4o-mini}
+      AURELIX_MODEL_API_KEY: ${AURELIX_MODEL_API_KEY:?set AURELIX_MODEL_API_KEY}
+      AURELIX_RESEARCH_PROVIDER: tavily
+      AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:?set AURELIX_RESEARCH_API_KEY}
+      AURELIX_DATABASE_URL: postgresql://aurelix:${POSTGRES_PASSWORD}@postgres:5432/aurelix
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      AURELIX_DOMAIN: ${AURELIX_DOMAIN:?set AURELIX_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      aurelix:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
