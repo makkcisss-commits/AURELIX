@@ -7,10 +7,10 @@
   }
 
   async function getSnapshot(secret) {
-    const response = await fetch(`${baseUrl()}/api/v1/control/runtime`, {
+    const response = await fetch(`${baseUrl()}/v1/control/snapshot`, {
       method: 'GET',
       credentials: 'include',
-      headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+      headers: secret ? { 'X-AURELIX-SECRET': secret } : {},
       cache: 'no-store'
     });
 
