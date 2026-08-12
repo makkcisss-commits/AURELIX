@@ -74,6 +74,9 @@ class ResearchEngine:
         self.provider = provider
 
     def run(self, objective: str, store: EngineStore) -> Dict[str, Any]:
+        objective = objective.strip()
+        if not objective:
+            raise ValueError("research objective is required")
         evidence = self.provider(objective) if self.provider else []
         store.record("research.completed", objective=objective, evidence_count=len(evidence))
         return {"objective": objective, "evidence": evidence}
@@ -86,7 +89,7 @@ class AcademyEngine:
         self.model_gateway = model_gateway
 
     def run(self, research: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
-        evidence = research.get("evidence", [])
+        evidence = list(research.get("evidence", []))
         lessons = [e.claim for e in evidence if getattr(e, "verified", False)]
         if self.model_gateway and evidence:
             from aurelix_core.model_gateway import GenerationRequest
@@ -101,23 +104,36 @@ class AcademyEngine:
             )
             if generated.strip():
                 lessons = [generated.strip()]
-        store.record("academy.learned", lesson_count=len(lessons))
-        return {"lessons": lessons, "gaps": [] if lessons else [research.get("objective", "unknown")]}
+        store.record("academy.learned", lesson_count=len(lessons), evidence_count=len(evidence))
+        return {
+            "lessons": lessons,
+            "evidence": evidence,
+            "gaps": [] if lessons else [research.get("objective", "unknown")],
+        }
 
 
 class KnowledgeEngine:
     name = "knowledge"
 
     def run(self, academy: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
+        evidence = list(academy.get("evidence", []))
+        verified = bool(evidence) and all(getattr(item, "verified", False) for item in evidence)
+        tags = ["academy", "learning", "validated" if verified else "draft"]
         item = KnowledgeItem(
             id=str(uuid4()),
             title="AURELIX learning record",
             content="\n".join(academy.get("lessons", [])),
-            tags=["academy", "learning"],
+            evidence=evidence,
+            tags=tags,
         )
         store.knowledge[item.id] = item
-        store.record("knowledge.stored", knowledge_id=item.id)
-        return {"knowledge_id": item.id, "lessons": academy.get("lessons", [])}
+        store.record("knowledge.stored", knowledge_id=item.id, evidence_count=len(evidence), validated=verified)
+        return {
+            "knowledge_id": item.id,
+            "lessons": academy.get("lessons", []),
+            "evidence": evidence,
+            "validated": verified,
+        }
 
 
 class InnovationEngine:
@@ -127,12 +143,18 @@ class InnovationEngine:
         self.model_gateway = model_gateway
 
     def run(self, knowledge: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
+        evidence = list(knowledge.get("evidence", []))
         if self.model_gateway:
             from aurelix_core.model_gateway import GenerationRequest
+            evidence_text = "\n".join(
+                f"- {getattr(item, 'source', '')}: {getattr(item, 'claim', '')}"
+                for item in evidence
+            )
             result = self.model_gateway.structured_output(
                 GenerationRequest(
                     prompt=("Generate one conservative innovation proposal from this knowledge. "
-                            "Do not invent evidence.\n" + str(knowledge)),
+                            "Do not invent evidence. Preserve the supplied provenance.\n"
+                            + str(knowledge) + "\nEvidence:\n" + evidence_text),
                     action="innovation.propose",
                     actor_id="innovation",
                 ),
@@ -146,15 +168,21 @@ class InnovationEngine:
                     "confidence": "number",
                 },
             )
-            proposal = {"id": str(uuid4()), "basis": knowledge.get("knowledge_id"), **result}
+            proposal = {
+                "id": str(uuid4()),
+                "basis": knowledge.get("knowledge_id"),
+                "evidence_count": len(evidence),
+                **result,
+            }
         else:
             proposal = {
                 "id": str(uuid4()),
                 "title": "Innovation proposal from validated knowledge",
                 "basis": knowledge.get("knowledge_id"),
+                "evidence_count": len(evidence),
                 "status": "proposal",
             }
-        store.record("innovation.proposed", proposal_id=proposal["id"])
+        store.record("innovation.proposed", proposal_id=proposal["id"], evidence_count=proposal["evidence_count"])
         return proposal
 
 
