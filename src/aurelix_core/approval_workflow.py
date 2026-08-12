@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from threading import Lock
-from uuid import uuid4
 
 from .approvals import OwnerApproval, apply_owner_approval
-from .audit import AuditLog
+from .audit import AuditEvent, AuditLog
 from .models import DecisionRequest, DecisionStatus
 
 
@@ -25,11 +24,21 @@ class ApprovalWorkflow:
         self._pending: dict[str, PendingApproval] = {}
         self._lock = Lock()
 
+    def _record_audit(self, event_type: str, actor_id: str, subject_id: str, outcome: str) -> None:
+        self._audit.append(
+            AuditEvent(
+                event_type=event_type,
+                actor_id=actor_id,
+                subject_id=subject_id,
+                outcome=outcome,
+            )
+        )
+
     def submit(self, request: DecisionRequest, actor: str = "system") -> PendingApproval:
         item = PendingApproval(request, datetime.now(timezone.utc))
         with self._lock:
             self._pending[request.id] = item
-        self._audit.record("approval.requested", actor, "PENDING")
+        self._record_audit("approval.requested", actor, request.id, "PENDING")
         return item
 
     def approve(
@@ -57,9 +66,9 @@ class ApprovalWorkflow:
         if decision.status is DecisionStatus.APPROVED:
             with self._lock:
                 self._pending.pop(request_id, None)
-            self._audit.record("approval.decided", owner_id, "APPROVED")
+            self._record_audit("approval.decided", owner_id, request_id, "APPROVED")
         else:
-            self._audit.record("approval.decided", owner_id, "REJECTED")
+            self._record_audit("approval.decided", owner_id, request_id, "REJECTED")
         return decision
 
     def reject(self, request_id: str, *, owner_id: str):
@@ -67,7 +76,7 @@ class ApprovalWorkflow:
             item = self._pending.pop(request_id, None)
         if item is None:
             raise KeyError("approval request not found")
-        self._audit.record("approval.decided", owner_id, "REJECTED")
+        self._record_audit("approval.decided", owner_id, request_id, "REJECTED")
         return {
             "request_id": request_id,
             "status": DecisionStatus.REJECTED,
