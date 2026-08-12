@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
-from .learning_ledger import LearningLedger
+from .provenance import ProvenanceLedger
 
 
 class GovernanceError(RuntimeError):
@@ -25,19 +24,28 @@ class GovernanceGate:
 
     REQUIRED_TYPES = {"evidence", "knowledge", "experiment", "evaluation", "opportunity"}
 
-    def __init__(self, ledger: LearningLedger | None = None):
-        self.ledger = ledger or LearningLedger()
+    def __init__(self, ledger: ProvenanceLedger | None = None):
+        self.ledger = ledger or ProvenanceLedger()
         self.audit: list[Transition] = []
 
     def authorize(self, transition: Transition) -> Transition:
         if transition.object_type in self.REQUIRED_TYPES and not transition.parent_ids:
             raise GovernanceError("governed object requires provenance parents")
-        if transition.object_type in self.REQUIRED_TYPES:
-            for parent_id in transition.parent_ids:
-                if self.ledger.ledger.get(parent_id) is None:
-                    raise GovernanceError(f"missing provenance parent: {parent_id}")
+        for parent_id in transition.parent_ids:
+            if not self.ledger.for_subject(parent_id):
+                raise GovernanceError(f"missing provenance parent: {parent_id}")
         self.audit.append(transition)
         return transition
 
+    def register(self, transition: Transition):
+        self.authorize(transition)
+        return self.ledger.append(
+            transition.object_type,
+            transition.object_id,
+            list(transition.parent_ids),
+            actor_id=transition.actor_id,
+            action=transition.action,
+        )
+
     def lineage(self, object_id: str):
-        return self.ledger.ledger.lineage(object_id)
+        return self.ledger.lineage(object_id)
