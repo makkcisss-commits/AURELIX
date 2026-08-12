@@ -144,10 +144,21 @@ def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
     return response.body
 
 
-# The API routes above must be registered before this catch-all mount so that
-# /v1/* and /health remain reachable. In a source checkout the web directory
-# sits two levels above this module; when packaged without the UI we simply
-# expose the API without failing application startup.
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 if _WEB_ROOT.is_dir():
     app.mount("/", StaticFiles(directory=_WEB_ROOT, html=True), name="web")
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "aurelix_core.server:app",
+        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
+        port=int(os.getenv("AURELIX_PORT", "8000")),
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()
