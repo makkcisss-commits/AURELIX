@@ -17,10 +17,11 @@ class QueuedJob:
 
 
 class PersistentJobQueue:
-    """Small durable queue abstraction over EngineStore.
+    """In-process queue abstraction over EngineStore.
 
-    A production deployment can replace the backing store with Postgres/Redis
-    without changing the worker-facing contract.
+    This compatibility queue is intentionally separate from the SQLite
+    RuntimeStore used by the production runtime. The backing implementation
+    can be replaced without changing the worker-facing contract.
     """
 
     def __init__(self, store: EngineStore | None = None):
@@ -55,7 +56,7 @@ class PersistentJobQueue:
 
     def execute(self, job_id: str, runner: PipelineJobRunner | None = None) -> Any:
         job = self.claim(job_id)
-        runner = runner or PipelineJobRunner(self.store)
+        runner = runner or PipelineJobRunner()
         try:
             result = runner.execute(job.job_id, job.objective)
             job.status = result.status
