@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -23,17 +24,26 @@ class AuditEvent:
 
 
 class AuditLog:
-    """Small in-memory audit sink for the core boundary.
+    """Thread-safe V1 audit sink for the core boundary.
 
-    Production storage will be an append-only durable backend. This object is
-    deliberately dependency-free so the policy layer can be tested first.
+    Production storage must be a durable, append-only and access-controlled
+    backend. This object intentionally exposes no delete or update operation.
     """
 
     def __init__(self) -> None:
         self._events: list[AuditEvent] = []
+        self._lock = Lock()
 
     def append(self, event: AuditEvent) -> None:
-        self._events.append(event)
+        with self._lock:
+            self._events.append(event)
 
     def all(self) -> tuple[AuditEvent, ...]:
-        return tuple(self._events)
+        with self._lock:
+            return tuple(self._events)
+
+    def recent(self, limit: int = 50) -> tuple[AuditEvent, ...]:
+        if limit < 1:
+            return ()
+        with self._lock:
+            return tuple(self._events[-limit:])
