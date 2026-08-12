@@ -1,0 +1,27 @@
+services:
+  aurelix:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "${AURELIX_PORT:-8000}:8000"
+    environment:
+      AURELIX_ENV: ${AURELIX_ENV:-development}
+      AURELIX_LOG_LEVEL: ${AURELIX_LOG_LEVEL:-INFO}
+      AURELIX_HOST: 0.0.0.0
+      AURELIX_PORT: 8000
+      AURELIX_OWNER_ID: ${AURELIX_OWNER_ID:-owner}
+      AURELIX_OWNER_SECRET: ${AURELIX_OWNER_SECRET:?set AURELIX_OWNER_SECRET before starting}
+      AURELIX_MODEL_BASE_URL: ${AURELIX_MODEL_BASE_URL:-}
+      AURELIX_MODEL_NAME: ${AURELIX_MODEL_NAME:-gpt-4o-mini}
+      AURELIX_MODEL_API_KEY: ${AURELIX_MODEL_API_KEY:-}
+      AURELIX_RESEARCH_PROVIDER: ${AURELIX_RESEARCH_PROVIDER:-http}
+      AURELIX_RESEARCH_URL: ${AURELIX_RESEARCH_URL:-}
+      AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:-}
+      AURELIX_DATABASE_URL: ${AURELIX_DATABASE_URL:-}
+    volumes:
+      - aurelix_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  aurelix_data:
