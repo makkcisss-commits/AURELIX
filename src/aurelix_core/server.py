@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi.staticfiles import StaticFiles
 
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
@@ -140,3 +142,12 @@ def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["error"])
     return response.body
+
+
+# The API routes above must be registered before this catch-all mount so that
+# /v1/* and /health remain reachable. In a source checkout the web directory
+# sits two levels above this module; when packaged without the UI we simply
+# expose the API without failing application startup.
+_WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+if _WEB_ROOT.is_dir():
+    app.mount("/", StaticFiles(directory=_WEB_ROOT, html=True), name="web")
