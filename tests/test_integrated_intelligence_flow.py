@@ -5,7 +5,7 @@ from pathlib import Path
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.intelligence_flow import IntelligenceFlow
 from aurelix_core.model_gateway import ModelProvider
-from aurelix_runtime.integrated_engines import EngineStore, EngineStore, Evidence
+from aurelix_runtime.integrated_engines import EngineStore, Evidence
 from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeQuery
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
