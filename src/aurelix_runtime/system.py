@@ -45,10 +45,10 @@ class AurelixSystem:
         schedule = Schedule(name, interval_seconds, "autonomy.run", {"objective": objective})
         with self._schedule_lock:
             self.scheduler.add(schedule)
-            # A schedule is not due at registration time. This prevents a
-            # manual submission and the scheduler from consuming two jobs in
-            # the same tick while still sharing the canonical Runtime queue.
-            self._next_run.setdefault(name, time.monotonic() + interval_seconds)
+            # The first scheduled run is immediately due. Scheduler.tick only
+            # consumes the shared Runtime queue; it does not enqueue schedules,
+            # so this still produces exactly one execution per tick.
+            self._next_run.setdefault(name, time.monotonic())
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
         return self.runtime.submit(kind, payload or {})
