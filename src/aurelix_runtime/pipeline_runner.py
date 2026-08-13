@@ -11,6 +11,7 @@ from .integrated_engines import (
     ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine,
     ResearchEngine,
 )
+from .research_provider import HttpResearchProvider
 
 
 @dataclass
@@ -32,7 +33,7 @@ class GovernedPipeline:
                  governance: Optional[GovernanceGate] = None):
         self.store = store or EngineStore()
         self.governance = governance or GovernanceGate()
-        self.research = research_engine or ResearchEngine()
+        self.research = research_engine or ResearchEngine(provider=HttpResearchProvider.from_env())
         self.academy = AcademyEngine()
         self.knowledge = KnowledgeEngine()
         self.innovation = InnovationEngine()
@@ -44,35 +45,25 @@ class GovernedPipeline:
     def _transition(self, object_type: str, parent_id: str | None = None) -> str:
         object_id = f"{object_type}-{uuid4()}"
         parents = () if parent_id is None else (parent_id,)
-        self.governance.register(
-            Transition(object_id, object_type, parents, "aurelix-pipeline", "advance")
-        )
-        self.store.record("governance.transition", object_id=object_id, object_type=object_type,
-                          parent_id=parent_id or "")
+        self.governance.register(Transition(object_id, object_type, parents, "aurelix-pipeline", "advance"))
+        self.store.record("governance.transition", object_id=object_id, object_type=object_type, parent_id=parent_id or "")
         return object_id
 
     def run(self, objective: str, business_approved: bool = False) -> PipelineResult:
         research = self.research.run(objective, self.store)
         research_id = self._transition("research")
-
         academy = self.academy.run(research, self.store)
         academy_id = self._transition("academy", research_id)
-
         knowledge = self.knowledge.run(academy, self.store)
         knowledge_id = self._transition("knowledge", academy_id)
-
         innovation = self.innovation.run(knowledge, self.store)
         innovation_id = self._transition("innovation", knowledge_id)
-
         experiment = self.experiment.run(innovation, self.store)
         experiment_id = self._transition("experiment", innovation_id)
-
         evaluation = self.evaluation.run(experiment, self.store)
         evaluation_id = self._transition("evaluation", experiment_id)
-
         opportunity = self.opportunity.run(evaluation, self.store)
         opportunity_id = self._transition("opportunity", evaluation_id)
-
         business = self.business.run(opportunity, approved=business_approved)
         self._transition("business", opportunity_id)
         self.store.record("pipeline.completed", objective=objective, business_status=business["status"])
