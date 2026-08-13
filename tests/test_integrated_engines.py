@@ -28,20 +28,19 @@ def test_complete_engine_chain_without_external_provider_stops_safely():
     assert store.opportunities == {}
 
 
-def test_experiment_executes_when_innovation_exists():
+def test_experiment_preparation_does_not_claim_execution_without_observations():
     store = EngineStore()
     knowledge = {"knowledge_id": "k-1", "lessons": ["useful lesson"], "evidence": []}
     innovation = InnovationEngine().run(knowledge, store)
     experiment = ExperimentEngine().run(innovation, store)
 
     assert experiment["experiment_id"] in store.experiments
-    assert experiment["status"] == "completed"
-    assert experiment["result"]["execution_mode"] == "internal_validation"
-    assert experiment["result"]["passed"] is True
+    assert experiment["status"] == "proposed"
+    assert experiment["result"] is None
 
     evaluation = EvaluationEngine().run(experiment, store)
-    assert evaluation["passed"] is True
-    assert evaluation["execution_mode"] == "internal_validation"
+    assert evaluation["passed"] is False
+    assert evaluation["reason"] == "awaiting_execution"
 
 
 def test_candidate_opportunity_is_detected_but_cannot_reach_business():
