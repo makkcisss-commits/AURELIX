@@ -8,7 +8,7 @@ from aurelix_runtime.persistence import LeaseLostError, RuntimeStore
 
 def test_running_job_recovers_once_after_restart(tmp_path):
     db = tmp_path / "runtime.db"
-    first = RuntimeStore(db, lease_seconds=0.05)
+    first = RuntimeStore(db, lease_seconds=1.0)
     job = first.enqueue("demo", {"value": "1"})
     claimed = first.claim_next(worker_id="worker-1")
     assert claimed is not None
@@ -16,8 +16,8 @@ def test_running_job_recovers_once_after_restart(tmp_path):
     assert claimed.attempts == 1
     first.close()
 
-    time.sleep(0.08)
-    second = RuntimeStore(db, lease_seconds=0.05)
+    time.sleep(1.1)
+    second = RuntimeStore(db, lease_seconds=1.0)
     assert second.recover_running_jobs() == 1
     recovered = second.claim_next(worker_id="worker-2")
     assert recovered is not None
@@ -32,11 +32,11 @@ def test_running_job_recovers_once_after_restart(tmp_path):
 
 
 def test_expired_worker_is_fenced_after_recovery(tmp_path):
-    store = RuntimeStore(tmp_path / "runtime.db", lease_seconds=0.05)
+    store = RuntimeStore(tmp_path / "runtime.db", lease_seconds=1.0)
     job = store.enqueue("demo", {})
     stale = store.claim_next(worker_id="worker-a")
     assert stale is not None
-    time.sleep(0.08)
+    time.sleep(1.1)
 
     assert store.recover_running_jobs() == 1
     fresh = store.claim_next(worker_id="worker-b")
