@@ -172,15 +172,53 @@ class RuntimeStore:
     def audit(self, event_type: str, actor: str, subject: str, outcome: str, metadata: dict) -> None:
         self.record_audit(subject, event_type, {"actor": actor, "subject": subject, "outcome": outcome, **metadata})
 
-    def recover_running_jobs(self) -> int:
-        """Return jobs left running by an unclean restart to the queue and audit them."""
+    def recover_running_jobs(self, max_attempts: int = 3) -> int:
+        """Recover jobs left running by an unclean restart without creating retry loops."""
         now = self._now()
-        with self.lock, self.db:
-            rows = self.db.execute("SELECT job_id FROM jobs WHERE status='running'").fetchall()
-            cursor = self.db.execute("UPDATE jobs SET status='queued', updated_at=? WHERE status='running'", (now,))
-            for row in rows:
-                self.record_audit(row["job_id"], "job.interrupted", {"recovered_at": now})
-        return cursor.rowcount
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self.db.execute(
+                    "SELECT job_id, attempts FROM jobs WHERE status='running'"
+                ).fetchall()
+                if not rows:
+                    self.db.rollback()
+                    return 0
+
+                recovered = 0
+                for row in rows:
+                    if row["attempts"] >= max_attempts:
+                        self.db.execute(
+                            "UPDATE jobs SET status='failed', updated_at=?, last_error=? WHERE job_id=? AND status='running'",
+                            (now, "interrupted after maximum attempts", row["job_id"]),
+                        )
+                        self.db.execute(
+                            "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at",
+                            (row["job_id"], json.dumps({"ok": False, "error": "interrupted after maximum attempts"}, sort_keys=True), now),
+                        )
+                        outcome = "failed"
+                    else:
+                        self.db.execute(
+                            "UPDATE jobs SET status='queued', updated_at=?, last_error=? WHERE job_id=? AND status='running'",
+                            (now, "interrupted; queued for recovery", row["job_id"]),
+                        )
+                        outcome = "queued"
+                    self.db.execute(
+                        "INSERT INTO audit_events(event_id,job_id,event_type,payload,created_at) VALUES(?,?,?,?,?)",
+                        (
+                            str(uuid4()),
+                            row["job_id"],
+                            "job.interrupted",
+                            json.dumps({"recovered_at": now, "attempts": row["attempts"], "outcome": outcome}, sort_keys=True),
+                            now,
+                        ),
+                    )
+                    recovered += 1
+                self.db.commit()
+                return recovered
+            except Exception:
+                self.db.rollback()
+                raise
 
     def recover_running(self) -> int:
         return self.recover_running_jobs()
