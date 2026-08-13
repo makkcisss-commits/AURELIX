@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict
+from uuid import uuid4
 
 from .integrated_engines import EngineStore
 from .job_runner import JobExecution, PipelineJobRunner
@@ -42,11 +44,13 @@ class PersistentJobQueue:
         callers cannot both observe a missing execution ID and race into a UNIQUE
         constraint failure. Reusing an ID for a different objective is rejected.
         """
+        now = datetime.now(timezone.utc).isoformat()
         payload = {"objective": objective}
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
                 row = self.store.db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                created = row is None
                 if row is not None:
                     stored_objective = json.loads(row["payload"]).get("objective", "")
                     if stored_objective != objective:
@@ -59,20 +63,28 @@ class PersistentJobQueue:
                         row["status"],
                         row["attempts"],
                     )
-                    self.store.db.commit()
                 else:
-                    job = self.store.enqueue("pipeline", payload, execution_id=job_id)
-                    queued = QueuedJob(job.job_id, objective, job.status, job.attempts)
-                    # RuntimeStore.enqueue uses its own transaction; the outer
-                    # BEGIN IMMEDIATE is intentionally kept as the serialization
-                    # boundary for the lookup/insert decision.
-                    self.store.db.commit()
+                    self.store.db.execute(
+                        "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) "
+                        "VALUES(?,?,?,?,?,?,?)",
+                        (
+                            job_id,
+                            "pipeline",
+                            json.dumps(payload, sort_keys=True),
+                            "queued",
+                            0,
+                            now,
+                            now,
+                        ),
+                    )
+                    queued = QueuedJob(job_id, objective, "queued", 0)
+                self.store.db.commit()
             except Exception:
                 self.store.db.rollback()
                 raise
 
         self.jobs[queued.job_id] = queued
-        if row is None:
+        if created:
             self.engine_store.record("job.queued", job_id=job_id)
         return queued
 
