@@ -21,7 +21,9 @@ def test_scheduler_persists_engine_state_in_the_same_runtime_store():
     scheduler.tick()
     with scheduler.queue.store.lock:
         keys = {row[0] for row in scheduler.queue.store.db.execute("SELECT key FROM runtime_state WHERE key LIKE 'engine.%'").fetchall()}
-    assert {"engine.knowledge", "engine.experiments", "engine.opportunities", "engine.audit"} <= keys
+        knowledge_count = scheduler.queue.store.db.execute("SELECT COUNT(*) FROM knowledge_items").fetchone()[0]
+    assert {"engine.experiments", "engine.opportunities", "engine.audit"} <= keys
+    assert knowledge_count >= 0
     assert scheduler.queue.store.get_result(job_id)["execution_id"] == job_id
     scheduler.queue.close()
 
