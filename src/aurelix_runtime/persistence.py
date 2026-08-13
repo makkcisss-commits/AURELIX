@@ -112,10 +112,7 @@ class RuntimeStore:
         job_id = execution_id or str(uuid4())
         payload = payload or {}
         with self.lock, self.db:
-            self.db.execute(
-                "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                (job_id, name, json.dumps(payload, sort_keys=True), "queued", 0, now, now),
-            )
+            self.db.execute("INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id, name, json.dumps(payload, sort_keys=True), "queued", 0, now, now))
         return JobRecord(job_id, name, payload, "queued", 0, now, now)
 
     def get(self, job_id: str) -> JobRecord | None:
@@ -156,23 +153,29 @@ class RuntimeStore:
 
     def _claim_row(self, row: sqlite3.Row, worker_id: str | None) -> JobRecord:
         now = self._now()
-        cursor = self.db.execute(
-            """UPDATE jobs SET status='running', attempts=attempts+1, updated_at=?,
-               started_at=COALESCE(started_at, ?), heartbeat_at=?, worker_id=?
-               WHERE job_id=? AND status='queued'""",
-            (now, now, now, worker_id, row["job_id"]),
-        )
+        cursor = self.db.execute("UPDATE jobs SET status='running', attempts=attempts+1, updated_at=?, started_at=COALESCE(started_at, ?), heartbeat_at=?, worker_id=? WHERE job_id=? AND status='queued'", (now, now, now, worker_id, row["job_id"]))
         if cursor.rowcount != 1:
             self.db.rollback()
             raise RuntimeError(f"job {row['job_id']} was claimed concurrently")
         self.db.commit()
         return JobRecord(row["job_id"], row["name"], json.loads(row["payload"]), "running", row["attempts"] + 1, row["created_at"], now)
 
-    def heartbeat(self, job_id: str, worker_id: str | None = None) -> bool:
+    def heartbeat(self, job_id: str | None = None, worker_id: str | None = None) -> bool:
+        """Heartbeat a job, or the runtime when called without a job ID."""
+        if job_id is None:
+            self.heartbeat_runtime()
+            return True
         now = self._now()
         with self.lock, self.db:
             cursor = self.db.execute("UPDATE jobs SET heartbeat_at=?, updated_at=? WHERE job_id=? AND status='running' AND (? IS NULL OR worker_id=?)", (now, now, job_id, worker_id, worker_id))
         return cursor.rowcount == 1
+
+    def heartbeat_runtime(self) -> None:
+        with self.lock, self.db:
+            self.db.execute("INSERT INTO runtime_state(key,value) VALUES('heartbeat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (self._now(),))
+
+    def record(self, event_type: str, **metadata: object) -> None:
+        self.record_audit(None, event_type, metadata)
 
     def complete(self, job_id: str, result: dict | None = None) -> dict:
         """Persist the result and successful terminal transition atomically and idempotently."""
@@ -201,6 +204,11 @@ class RuntimeStore:
 
     def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False, result: dict | None = None) -> None:
         if success:
+            row = self.get(job_id)
+            if row is None:
+                raise KeyError(f"job not found: {job_id}")
+            if row.status != "running":
+                raise RuntimeError(f"job {job_id} cannot finish from state {row.status}")
             self.complete(job_id, result or {"ok": True})
             return
         now = self._now()
@@ -216,7 +224,6 @@ class RuntimeStore:
                 self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
 
     def record_result(self, job_id: str, result: dict) -> None:
-        """Compatibility API; terminal results cannot be overwritten."""
         now = self._now()
         with self.lock, self.db:
             row = self.db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -276,10 +283,6 @@ class RuntimeStore:
 
     def recover_running(self) -> int:
         return self.recover_running_jobs()
-
-    def heartbeat_runtime(self) -> None:
-        with self.lock, self.db:
-            self.db.execute("INSERT INTO runtime_state(key,value) VALUES('heartbeat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (self._now(),))
 
     def status(self) -> dict[str, int | str]:
         with self.lock:
