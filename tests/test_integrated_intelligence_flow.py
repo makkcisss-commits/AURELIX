@@ -39,12 +39,7 @@ def test_research_knowledge_innovation_experiment_evaluation(tmp_path: Path):
     def research_provider(query: str):
         return [Evidence("https://example.test/source", f"Source-backed finding for {query}", 0.9, True)]
 
-    factory = EngineFactory(
-        runtime=runtime,
-        model_provider=FakeModelProvider(),
-        research_provider=research_provider,
-        knowledge=repository,
-    )
+    factory = EngineFactory(runtime=runtime, model_provider=FakeModelProvider(), research_provider=research_provider, knowledge=repository)
     store = EngineStore()
 
     research = factory.research_and_store("bounded automation")
@@ -79,12 +74,7 @@ def test_complete_intelligence_flow_and_execution(tmp_path: Path):
     def research_provider(query: str):
         return [Evidence("https://example.test/source", f"Verified finding for {query}", 0.95, True)]
 
-    factory = EngineFactory(
-        runtime=runtime,
-        model_provider=FakeModelProvider(),
-        research_provider=research_provider,
-        knowledge=repository,
-    )
+    factory = EngineFactory(runtime=runtime, model_provider=FakeModelProvider(), research_provider=research_provider, knowledge=repository)
     flow = IntelligenceFlow(factory)
 
     result = flow.research_to_experiment("safe workflow automation")
@@ -96,8 +86,8 @@ def test_complete_intelligence_flow_and_execution(tmp_path: Path):
     assert result["experiment"]["experiment_id"]
     assert result["evaluation"]["passed"] is False
     assert result["evaluation"]["reason"] == "awaiting_execution"
-    assert result["opportunity"]["opportunity_id"]
-    assert result["business"]["status"] == "awaiting_approval"
+    assert result["opportunity"]["opportunity_id"] is None
+    assert result["business"]["status"] == "awaiting_validation"
 
     experiment_id = result["experiment"]["experiment_id"]
     execution = flow.execute_experiment(experiment_id, [{"success": 1.0}])
@@ -110,8 +100,6 @@ def test_complete_intelligence_flow_and_execution(tmp_path: Path):
     assert stored.result["passed"] is True
     assert runtime.query_experiment_observations(experiment_id) == [{"success": 1.0}]
 
-    # Restart the runtime against the same database: durable state must survive
-    # the process boundary.
     restarted = AurelixRuntime(RuntimeConfig(database_path=database_path))
     restored = restarted.get_experiment(experiment_id)
     assert restored.status == "complete"
