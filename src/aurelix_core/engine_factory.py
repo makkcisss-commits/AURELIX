@@ -16,6 +16,7 @@ from aurelix_runtime.integrated_engines import (
     InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine,
 )
 from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledgeRepository
+from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
@@ -51,6 +52,7 @@ class EngineFactory:
             development_research_provider if development_mode else self._build_research_provider()
         )
         self.knowledge: KnowledgeRepository = knowledge or SQLiteKnowledgeRepository(self.runtime.store)
+        self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
@@ -117,6 +119,9 @@ class EngineFactory:
 
     def validate_system(self):
         return self.system_validation.run()
+
+    def learn_verified(self, objective: str, evidence):
+        return self.knowledge_learning.learn(objective, evidence)
 
     def plan_system_change(self, objective: str, scope: list[str] | None = None):
         return self.system_developer.plan(objective, scope)
