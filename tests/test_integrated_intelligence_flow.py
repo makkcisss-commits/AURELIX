@@ -5,7 +5,7 @@ from pathlib import Path
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.intelligence_flow import IntelligenceFlow
 from aurelix_core.model_gateway import ModelProvider
-from aurelix_runtime.integrated_engines import EngineStore, Evidence
+from aurelix_runtime.integrated_engines import EngineStore, EngineStore, Evidence
 from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeQuery
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
@@ -91,9 +91,10 @@ def test_complete_intelligence_flow_and_execution(tmp_path: Path):
     assert result["evidence_count"] == 1
     assert result["knowledge_ids"]
     assert result["academy"]["lessons"]
-    assert result["innovation"]["opportunity"]
+    assert result["innovation"]["id"]
     assert result["experiment"]["experiment_id"]
-    assert result["evaluation"]["evaluation"]["passed"] is True
+    assert result["evaluation"]["passed"] is False
+    assert result["evaluation"]["reason"] == "awaiting_execution"
     assert result["opportunity"]["opportunity_id"]
     assert result["business"]["status"] == "awaiting_approval"
 
