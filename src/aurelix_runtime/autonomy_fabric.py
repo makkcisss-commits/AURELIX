@@ -70,8 +70,6 @@ class AutonomyFabric:
         execution_id = claimed.job_id
         objective = str(claimed.payload.get("objective", "")).strip()
         if not objective:
-            self.store.finish(execution_id, False, "research objective is required", retry=False,
-                              worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             raise ValueError("research objective is required")
 
         stop = threading.Event()
@@ -103,8 +101,6 @@ class AutonomyFabric:
             self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id})
             return AutonomyRun(**result)
         except Exception as exc:
-            self.store.finish(execution_id, False, str(exc), retry=False,
-                              worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__})
             raise
         finally:
@@ -118,7 +114,16 @@ class AutonomyFabric:
         claimed = self.store.claim(job.job_id, worker_id=worker_id)
         if claimed is None:
             raise RuntimeError(f"autonomy execution is not claimable: {execution_id}")
-        return self.run_claimed(claimed)
+        try:
+            return self.run_claimed(claimed)
+        except Exception as exc:
+            current = self.store.get(execution_id)
+            if current and current.status == "running":
+                self.store.finish(
+                    execution_id, False, str(exc), retry=False,
+                    worker_id=claimed.worker_id, lease_token=claimed.lease_token,
+                )
+            raise
 
     def close(self) -> None:
         self.store.close()
