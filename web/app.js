@@ -63,13 +63,39 @@
     const input = byId('owner-secret');
     if (input) input.value = '';
     setText('connection-state', 'CONNECTED');
+    const result = byId('research-result');
+    if (result) result.textContent = 'Connected. The intelligence pipeline is ready.';
+  }
+
+  async function runResearch() {
+    const secret = storedSecret();
+    const query = (byId('research-query')?.value || '').trim();
+    if (!secret) throw new Error('authentication_required');
+    if (!query) throw new Error('research_query_required');
+    const result = byId('research-result');
+    if (result) result.textContent = 'Running governed intelligence pipeline…';
+    const payload = await window.AURELIX_API.research(secret, query);
+    if (result) {
+      result.textContent = JSON.stringify({
+        query: payload.query,
+        evidence_count: payload.evidence_count,
+        knowledge_ids: payload.knowledge_ids,
+        experiment: payload.experiment,
+        evaluation: payload.evaluation,
+        opportunity: payload.opportunity,
+        business: payload.business
+      }, null, 2);
+    }
+    await refresh(secret);
   }
 
   function showError(error) {
     setText('connection-state', `ERROR: ${error.message || error}`);
+    const result = byId('research-result');
+    if (result) result.textContent = `ERROR: ${error.message || error}`;
   }
 
-  window.AURELIX_UI = { apply, refresh, connect, snapshot: () => ({ ...state }) };
+  window.AURELIX_UI = { apply, refresh, connect, runResearch, snapshot: () => ({ ...state }) };
 
   document.addEventListener('DOMContentLoaded', async () => {
     const form = byId('access-form');
@@ -78,6 +104,18 @@
         event.preventDefault();
         try {
           await connect(byId('owner-secret')?.value || '');
+        } catch (error) {
+          showError(error);
+        }
+      });
+    }
+
+    const researchForm = byId('research-form');
+    if (researchForm) {
+      researchForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+          await runResearch();
         } catch (error) {
           showError(error);
         }
