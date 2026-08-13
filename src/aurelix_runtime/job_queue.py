@@ -36,25 +36,44 @@ class PersistentJobQueue:
         }
 
     def enqueue(self, job_id: str, objective: str) -> QueuedJob:
-        """Enqueue idempotently for a stable execution ID.
+        """Atomically enqueue or return an existing execution for a stable ID.
 
-        Re-submitting the same execution ID returns the durable execution rather
-        than creating a duplicate. Reusing an ID for a different objective is
-        rejected because an idempotency key must identify one immutable request.
+        The lookup and insert happen in one SQLite write transaction so concurrent
+        callers cannot both observe a missing execution ID and race into a UNIQUE
+        constraint failure. Reusing an ID for a different objective is rejected.
         """
-        existing = self.store.get(job_id)
-        if existing is not None:
-            stored_objective = existing.payload.get("objective", "")
-            if stored_objective != objective:
-                raise ValueError(f"execution_id already belongs to a different objective: {job_id}")
-            queued = QueuedJob(existing.job_id, stored_objective, existing.status, existing.attempts)
-            self.jobs[existing.job_id] = queued
-            return queued
+        payload = {"objective": objective}
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                if row is not None:
+                    stored_objective = json.loads(row["payload"]).get("objective", "")
+                    if stored_objective != objective:
+                        raise ValueError(
+                            f"execution_id already belongs to a different objective: {job_id}"
+                        )
+                    queued = QueuedJob(
+                        row["job_id"],
+                        stored_objective,
+                        row["status"],
+                        row["attempts"],
+                    )
+                    self.store.db.commit()
+                else:
+                    job = self.store.enqueue("pipeline", payload, execution_id=job_id)
+                    queued = QueuedJob(job.job_id, objective, job.status, job.attempts)
+                    # RuntimeStore.enqueue uses its own transaction; the outer
+                    # BEGIN IMMEDIATE is intentionally kept as the serialization
+                    # boundary for the lookup/insert decision.
+                    self.store.db.commit()
+            except Exception:
+                self.store.db.rollback()
+                raise
 
-        job = self.store.enqueue("pipeline", {"objective": objective}, execution_id=job_id)
-        queued = QueuedJob(job.job_id, objective, job.status, job.attempts)
-        self.jobs[job.job_id] = queued
-        self.engine_store.record("job.queued", job_id=job_id)
+        self.jobs[queued.job_id] = queued
+        if row is None:
+            self.engine_store.record("job.queued", job_id=job_id)
         return queued
 
     def claim(self, job_id: str) -> QueuedJob:
