@@ -25,8 +25,7 @@ class QueuedJob:
 class PersistentJobQueue:
     """Worker-facing queue backed by RuntimeStore and fenced execution leases."""
 
-    def __init__(self, store: RuntimeStore | None = None, engine_store: EngineStore | None = None,
-                 worker_id: str | None = None):
+    def __init__(self, store: RuntimeStore | None = None, engine_store: EngineStore | None = None, worker_id: str | None = None):
         self.store = store or RuntimeStore()
         self.engine_store = engine_store or EngineStore(runtime_store=self.store)
         self.worker_id = worker_id or str(uuid4())
@@ -35,15 +34,8 @@ class PersistentJobQueue:
 
     def _refresh(self) -> None:
         with self.store.lock:
-            rows = self.store.db.execute(
-                "SELECT job_id, payload, status, attempts, worker_id, lease_token FROM jobs"
-            ).fetchall()
-        self.jobs = {
-            r["job_id"]: QueuedJob(
-                r["job_id"], json.loads(r["payload"]).get("objective", ""), r["status"],
-                r["attempts"], r["worker_id"], r["lease_token"]
-            ) for r in rows
-        }
+            rows = self.store.db.execute("SELECT job_id, payload, status, attempts, worker_id, lease_token FROM jobs").fetchall()
+        self.jobs = {r["job_id"]: QueuedJob(r["job_id"], json.loads(r["payload"]).get("objective", ""), r["status"], r["attempts"], r["worker_id"], r["lease_token"]) for r in rows}
 
     def enqueue(self, job_id: str, objective: str) -> QueuedJob:
         now = datetime.now(timezone.utc).isoformat()
@@ -57,15 +49,9 @@ class PersistentJobQueue:
                     stored_objective = json.loads(row["payload"]).get("objective", "")
                     if stored_objective != objective:
                         raise ValueError(f"execution_id already belongs to a different objective: {job_id}")
-                    queued = QueuedJob(
-                        row["job_id"], stored_objective, row["status"], row["attempts"],
-                        row["worker_id"], row["lease_token"]
-                    )
+                    queued = QueuedJob(row["job_id"], stored_objective, row["status"], row["attempts"], row["worker_id"], row["lease_token"])
                 else:
-                    self.store.db.execute(
-                        "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                        (job_id, "autonomy.run", json.dumps(payload, sort_keys=True), "queued", 0, now, now),
-                    )
+                    self.store.db.execute("INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id, "autonomy.run", json.dumps(payload, sort_keys=True), "queued", 0, now, now))
                     queued = QueuedJob(job_id, objective)
                 self.store.db.commit()
             except Exception:
@@ -82,16 +68,11 @@ class PersistentJobQueue:
             record = self.store.get(job_id)
             if record is None:
                 raise KeyError(f"unknown job: {job_id}")
-            job = QueuedJob(
-                record.job_id, record.payload.get("objective", ""), record.status,
-                record.attempts, record.worker_id, record.lease_token
-            )
+            job = QueuedJob(record.job_id, record.payload.get("objective", ""), record.status, record.attempts, record.worker_id, record.lease_token)
         claimed = self.store.claim(job_id, worker_id=self.worker_id)
         if claimed is None:
             raise RuntimeError(f"job is not claimable: {job.status}")
-        job.status, job.attempts, job.worker_id, job.lease_token = (
-            claimed.status, claimed.attempts, claimed.worker_id, claimed.lease_token
-        )
+        job.status, job.attempts, job.worker_id, job.lease_token = claimed.status, claimed.attempts, claimed.worker_id, claimed.lease_token
         self.jobs[job_id] = job
         self.engine_store.record("job.claimed", job_id=job_id, attempts=claimed.attempts, worker_id=self.worker_id)
         return job
@@ -122,16 +103,13 @@ class PersistentJobQueue:
         try:
             result = runner.execute(job.job_id, job.objective)
             self.engine_store.record("job.result", job_id=job_id, status=result.status)
-            self.jobs[job_id].status = "completed" if result.status in {"completed", "awaiting_approval"} else result.status
+            self.jobs[job_id].status = "completed"
             return result
         except Exception as exc:
             current = self.store.get(job.job_id)
             if current and current.status == "running":
                 retry = current.attempts < 3
-                self.store.finish(
-                    job.job_id, False, str(exc), retry=retry,
-                    worker_id=current.worker_id, lease_token=current.lease_token,
-                )
+                self.store.finish(job.job_id, False, str(exc), retry=retry, worker_id=current.worker_id, lease_token=current.lease_token)
                 self.jobs[job_id].status = "queued" if retry else "failed"
                 self.engine_store.record("job.failed", job_id=job_id, error=type(exc).__name__, retry=retry)
             raise
