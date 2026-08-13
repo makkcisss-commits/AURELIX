@@ -36,6 +36,21 @@ class PersistentJobQueue:
         }
 
     def enqueue(self, job_id: str, objective: str) -> QueuedJob:
+        """Enqueue idempotently for a stable execution ID.
+
+        Re-submitting the same execution ID returns the durable execution rather
+        than creating a duplicate. Reusing an ID for a different objective is
+        rejected because an idempotency key must identify one immutable request.
+        """
+        existing = self.store.get(job_id)
+        if existing is not None:
+            stored_objective = existing.payload.get("objective", "")
+            if stored_objective != objective:
+                raise ValueError(f"execution_id already belongs to a different objective: {job_id}")
+            queued = QueuedJob(existing.job_id, stored_objective, existing.status, existing.attempts)
+            self.jobs[existing.job_id] = queued
+            return queued
+
         job = self.store.enqueue("pipeline", {"objective": objective}, execution_id=job_id)
         queued = QueuedJob(job.job_id, objective, job.status, job.attempts)
         self.jobs[job.job_id] = queued
