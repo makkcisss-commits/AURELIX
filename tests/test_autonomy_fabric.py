@@ -14,6 +14,7 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     store = RuntimeStore(db)
     fabric = AutonomyFabric(store=store, research=ResearchEngine(provider=provider))
     run = fabric.run("find a validated opportunity")
+    durable = store.get_result(run.execution_id)
 
     assert run.status == "awaiting_validation"
     assert run.research["evidence"][0]["verified"] is True
@@ -21,10 +22,10 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     assert run.experiment["experiment_id"]
     assert run.evaluation["passed"] is False
     assert run.opportunity["status"] == "candidate"
-    assert run.opportunity["opportunity_id"] in store.get_result(run.execution_id)["opportunity"]["opportunity_id"]
+    assert run.opportunity["opportunity_id"] == durable["opportunity"]["opportunity_id"]
     assert run.business["status"] == "awaiting_validation"
     assert store.get(run.execution_id).status == "completed"
-    assert store.get_result(run.execution_id)["status"] == "awaiting_validation"
+    assert durable["status"] == "awaiting_validation"
     fabric.close()
 
     reopened = RuntimeStore(db)
