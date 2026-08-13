@@ -1,7 +1,8 @@
 """Bridge persisted jobs to governed execution fabrics."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, asdict
+import json
 from typing import Any, Dict
 
 from .autonomy_fabric import AutonomyFabric
@@ -36,6 +37,20 @@ class AutonomyJobRunner:
         self.store = store
         self.fabric = AutonomyFabric(store=store)
 
+    def _persist_engine_knowledge_state(self) -> None:
+        payload = {}
+        for key, value in self.fabric.engines.knowledge.items():
+            if is_dataclass(value):
+                payload[key] = asdict(value)
+            else:
+                payload[key] = value
+        with self.store.lock, self.store.db:
+            self.store.db.execute(
+                "INSERT INTO runtime_state(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("engine.knowledge", json.dumps(payload, sort_keys=True)),
+            )
+
     def execute(self, job_id: str, objective: str, approved: bool = False) -> JobExecution:
         claimed = self.store.get(job_id)
         if claimed is None:
@@ -46,6 +61,7 @@ class AutonomyJobRunner:
         if claimed.status != "running":
             raise RuntimeError(f"job {job_id} must be claimed before autonomy execution")
         run = self.fabric.run_claimed(claimed)
+        self._persist_engine_knowledge_state()
         return JobExecution(job_id, run.status, {"autonomy": run.__dict__})
 
     def close(self) -> None:
