@@ -1,13 +1,11 @@
-from aurelix_core.audit import AuditLog
-from aurelix_core.governor import Governor
+from aurelix_core.governor import Governor, GovernorRoute
 from aurelix_runtime.orchestrator import Capability, Orchestrator
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
 
 def test_full_orchestrator_governor_runtime_queue_worker_audit_junction(tmp_path):
     runtime = AurelixRuntime(RuntimeConfig(database_path=str(tmp_path / "aurelix.db")))
-    governor_audit = AuditLog()
-    governor = Governor(audit=governor_audit)
+    governor = Governor()
     seen = []
 
     try:
@@ -20,12 +18,21 @@ def test_full_orchestrator_governor_runtime_queue_worker_audit_junction(tmp_path
             )
         )
 
-        job_id = orchestrator.submit(capability="unit", payload={"objective": "full-junction"})
+        allowed = governor.route(
+            source="orchestrator",
+            action="unit",
+            requires_capital=False,
+            risk=0,
+            production_change=False,
+        )
+        assert allowed.route is GovernorRoute.POLICY_ALLOWED
 
+        job_id = orchestrator.submit(capability="unit", payload={"objective": "full-junction"})
         queued = runtime.store.get(job_id)
         assert queued is not None
         assert queued.status == "queued"
-        assert any(event.event_type == "job.queued" and event.job_id == job_id for event in runtime.store.audit_summary(20)["recent"])
+        assert any(event["event_type"] == "job.queued" and event["job_id"] == job_id
+                   for event in runtime.store.audit_summary(20)["recent"])
 
         assert orchestrator.run_once() is True
 
@@ -35,9 +42,24 @@ def test_full_orchestrator_governor_runtime_queue_worker_audit_junction(tmp_path
         assert runtime.store.get_result(job_id) == {"ok": True, "echo": "full-junction"}
         assert seen == [{"objective": "full-junction"}]
 
-        governor_events = governor_audit.all()
-        assert len(governor_events) == 0 or all(event.event_type != "decision.evaluated" for event in governor_events)
+        blocked = governor.route(
+            source="orchestrator",
+            action="capital",
+            requires_capital=True,
+            risk=0,
+            production_change=False,
+        )
+        assert blocked.route is GovernorRoute.OWNER_REQUIRED
+        try:
+            orchestrator.submit(capability="unit", payload={}, requires_capital=True)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("governor must block capital-gated work before queueing")
+
+        assert runtime.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         runtime_events = runtime.store.audit_summary(20)["recent"]
-        assert any(event["event_type"] == "job.completed" and event["job_id"] == job_id for event in runtime_events)
+        assert any(event["event_type"] == "job.completed" and event["job_id"] == job_id
+                   for event in runtime_events)
     finally:
         runtime.close()
