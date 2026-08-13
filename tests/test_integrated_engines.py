@@ -28,14 +28,20 @@ def test_complete_engine_chain_without_external_provider_stops_safely():
     assert store.opportunities == {}
 
 
-def test_validated_opportunity_is_the_only_path_to_business():
+def test_candidate_opportunity_is_detected_but_cannot_reach_business():
     store = EngineStore()
     evaluation = EvaluationEngine().run({"experiment_id": "exp-1"}, store)
     assert evaluation["passed"] is False
-    blocked = OpportunityEngine().run(evaluation, store)
-    assert blocked["opportunity_id"] is None
+    candidate = OpportunityEngine().run(evaluation, store)
+    assert candidate["status"] == "candidate"
+    assert candidate["requires_validation"] is True
+    assert candidate["opportunity_id"] in store.opportunities
+    assert BusinessEngine(require_approval=True).run(candidate, approved=True)["status"] == "awaiting_validation"
 
-    opportunity = OpportunityEngine().run({"experiment_id": "exp-1", "passed": True}, store)
+
+def test_validated_opportunity_is_the_only_path_to_business():
+    store = EngineStore()
+    opportunity = OpportunityEngine().run({"experiment_id": "exp-1", "passed": True, "confidence": 0.9}, store)
     assert opportunity["status"] == "validated"
     assert opportunity["opportunity_id"] in store.opportunities
     assert BusinessEngine(require_approval=True).run(opportunity, approved=False)["status"] == "awaiting_approval"
