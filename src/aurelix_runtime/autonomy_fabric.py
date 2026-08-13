@@ -12,6 +12,7 @@ from .integrated_engines import (
     ResearchEngine,
 )
 from .persistence import JobRecord, RuntimeStore
+from .research_provider import HttpResearchProvider
 
 
 def _jsonable(value: Any) -> Any:
@@ -48,7 +49,8 @@ class AutonomyFabric:
                  opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None) -> None:
         self.store = store or RuntimeStore()
         self.engines = engine_store or EngineStore(runtime_store=self.store)
-        self.research = research or ResearchEngine()
+        configured_provider = HttpResearchProvider.from_env()
+        self.research = research or ResearchEngine(provider=configured_provider)
         self.academy = academy or AcademyEngine()
         self.knowledge = knowledge or KnowledgeEngine()
         self.innovation = innovation or InnovationEngine()
@@ -82,7 +84,11 @@ class AutonomyFabric:
         self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id})
         try:
             research = self.research.run(objective, self.engines)
-            self.store.record_audit(execution_id, "autonomy.research", {"evidence_count": len(research.get("evidence", []))})
+            self.store.record_audit(execution_id, "autonomy.research", {
+                "evidence_count": len(research.get("evidence", [])),
+                "status": research.get("status"),
+                "provider_available": research.get("provider_available"),
+            })
             academy = self.academy.run(research, self.engines)
             knowledge = self.knowledge.run(academy, self.engines)
             innovation = self.innovation.run(knowledge, self.engines)
@@ -90,9 +96,10 @@ class AutonomyFabric:
             evaluation = self.evaluation.run(experiment, self.engines)
             opportunity = self.opportunity.run(evaluation, self.engines)
             business = self.business.run(opportunity, approved=False)
+            lifecycle_status = business.get("status") or "completed"
             result = _jsonable({
                 "execution_id": execution_id,
-                "status": "awaiting_approval" if business.get("status") == "awaiting_approval" else "completed",
+                "status": lifecycle_status,
                 "research": research, "academy": academy, "knowledge": knowledge,
                 "innovation": innovation, "experiment": experiment, "evaluation": evaluation,
                 "opportunity": opportunity, "business": business,
