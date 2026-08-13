@@ -20,9 +20,10 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     assert run.research["evidence"][0]["verified"] is True
     assert run.knowledge["validated"] is True
     assert run.experiment["experiment_id"]
+    assert run.experiment["status"] == "complete"
     assert run.evaluation["passed"] is False
-    assert run.opportunity["status"] == "candidate"
-    assert run.opportunity["opportunity_id"] == durable["opportunity"]["opportunity_id"]
+    assert run.evaluation["reason"] == "experiment_failed"
+    assert run.opportunity["opportunity_id"] is None
     assert run.business["status"] == "awaiting_validation"
     assert store.get(run.execution_id).status == "completed"
     assert durable["status"] == "awaiting_validation"
@@ -32,7 +33,7 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     engines = EngineStore(runtime_store=reopened)
     assert engines.knowledge
     assert engines.experiments
-    assert engines.opportunities
+    assert engines.opportunities == {}
     assert any(event["event"] == "knowledge.stored" for event in engines.audit)
     assert reopened.get_result(run.execution_id)["status"] == "awaiting_validation"
     reopened.close()
