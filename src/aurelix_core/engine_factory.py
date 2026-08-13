@@ -10,6 +10,7 @@ from .evaluation import EvaluationEngine as CoreEvaluationEngine
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .policy import PolicyEngine
+from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.integrated_engines import (
     AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
     InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine,
@@ -45,8 +46,6 @@ class EngineFactory:
         self.research_provider = research_provider if research_provider is not None else (
             development_research_provider if development_mode else self._build_research_provider()
         )
-        # RuntimeStore is the persistence boundary for execution, audit,
-        # experiments, observations and knowledge. No parallel in-memory silo.
         self.knowledge: KnowledgeRepository = knowledge or SQLiteKnowledgeRepository(self.runtime.store)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
@@ -57,6 +56,18 @@ class EngineFactory:
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
         self.business = BusinessEngine(require_approval=True)
+        self.enterprise = EnterpriseLoop(
+            runtime_store=self.runtime.store,
+            knowledge_repository=self.knowledge,
+            research=self.research,
+            academy=self.academy,
+            knowledge_engine=self.knowledge_engine,
+            innovation=self.innovation,
+            experiment=self.experiment,
+            evaluation=self.evaluation,
+            opportunity=self.opportunity,
+            business=self.business,
+        )
         self.experiment_runner = self.runtime.create_experiment_runner()
         self.core_evaluation = CoreEvaluationEngine()
 
@@ -89,6 +100,10 @@ class EngineFactory:
         if self.research_to_knowledge is None:
             raise RuntimeError("no research provider configured")
         return self.research_to_knowledge.research_and_store(query)
+
+    def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
+        """Run the complete connected specialist chain through one durable boundary."""
+        return self.enterprise.run(objective, approved=approved)
 
     def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
         if self.model_gateway is None:
