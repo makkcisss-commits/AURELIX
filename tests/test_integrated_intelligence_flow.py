@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aurelix_core.engine_factory import EngineFactory
+from aurelix_core.intelligence_flow import IntelligenceFlow
 from aurelix_core.model_gateway import ModelProvider
 from aurelix_runtime.integrated_engines import EngineStore, Evidence
 from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeQuery
@@ -68,3 +69,41 @@ def test_research_knowledge_innovation_experiment_evaluation(tmp_path: Path):
     assert run.evaluation.passed is True
     assert run.evaluation.confidence == 1.0
     assert runtime.query_experiments("complete")[0]["result"]["passed"] is True
+
+
+def test_complete_intelligence_flow_and_execution(tmp_path: Path):
+    runtime = AurelixRuntime(RuntimeConfig(database_path=str(tmp_path / "flow.db")))
+    repository = InMemoryKnowledgeRepository()
+
+    def research_provider(query: str):
+        return [Evidence("https://example.test/source", f"Verified finding for {query}", 0.95, True)]
+
+    factory = EngineFactory(
+        runtime=runtime,
+        model_provider=FakeModelProvider(),
+        research_provider=research_provider,
+        knowledge=repository,
+    )
+    flow = IntelligenceFlow(factory)
+
+    result = flow.research_to_experiment("safe workflow automation")
+
+    assert result["evidence_count"] == 1
+    assert result["knowledge_ids"]
+    assert result["academy"]["lessons"]
+    assert result["innovation"]["opportunity"]
+    assert result["experiment"]["experiment_id"]
+    assert result["evaluation"]["evaluation"]["passed"] is True
+    assert result["opportunity"]["opportunity_id"]
+    assert result["business"]["status"] == "awaiting_approval"
+
+    experiment_id = result["experiment"]["experiment_id"]
+    execution = flow.execute_experiment(experiment_id, [{"success": 1.0}])
+
+    assert execution["status"] == "complete"
+    assert execution["evaluation"]["passed"] is True
+    stored = runtime.get_experiment(experiment_id)
+    assert stored.status == "complete"
+    assert stored.result is not None
+    assert stored.result["passed"] is True
+    assert runtime.query_experiment_observations(experiment_id) == [{"success": 1.0}]
