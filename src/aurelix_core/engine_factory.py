@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .development_providers import DevelopmentModelProvider, development_research_provider
@@ -11,17 +11,10 @@ from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvide
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .policy import PolicyEngine
 from aurelix_runtime.integrated_engines import (
-    AcademyEngine,
-    BusinessEngine,
-    EvaluationEngine,
-    ExperimentEngine,
-    InnovationEngine,
-    KnowledgeEngine,
-    OpportunityEngine,
-    ResearchEngine,
+    AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
+    InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine,
 )
-from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeRepository
-from aurelix_runtime.postgres_knowledge_repository import PostgresKnowledgeRepository
+from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledgeRepository
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
@@ -29,22 +22,20 @@ from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
 @dataclass(frozen=True)
 class EngineFactoryConfig:
-    runtime: RuntimeConfig = RuntimeConfig()
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    register_autonomy: bool = True
 
 
 class EngineFactory:
-    """Single composition root; no engine chooses infrastructure by itself."""
+    """Canonical engine composition root sharing one durable runtime and knowledge store."""
 
-    def __init__(
-        self,
-        config: EngineFactoryConfig | None = None,
-        runtime: AurelixRuntime | None = None,
-        model_provider: ModelProvider | None = None,
-        research_provider=None,
-        knowledge: KnowledgeRepository | None = None,
-    ):
+    def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None,
+                 model_provider: ModelProvider | None = None, research_provider=None,
+                 knowledge: KnowledgeRepository | None = None):
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
+        if self.config.register_autonomy:
+            self.runtime.register_autonomy()
         self.policy_engine = PolicyEngine()
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
         self.model_provider = model_provider if model_provider is not None else (
@@ -54,7 +45,9 @@ class EngineFactory:
         self.research_provider = research_provider if research_provider is not None else (
             development_research_provider if development_mode else self._build_research_provider()
         )
-        self.knowledge: KnowledgeRepository = knowledge or self._build_knowledge_repository()
+        # RuntimeStore is the persistence boundary for execution, audit,
+        # experiments, observations and knowledge. No parallel in-memory silo.
+        self.knowledge: KnowledgeRepository = knowledge or SQLiteKnowledgeRepository(self.runtime.store)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
@@ -63,7 +56,7 @@ class EngineFactory:
         self.experiment = ExperimentEngine()
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
-        self.business = BusinessEngine()
+        self.business = BusinessEngine(require_approval=True)
         self.experiment_runner = self.runtime.create_experiment_runner()
         self.core_evaluation = CoreEvaluationEngine()
 
@@ -72,34 +65,16 @@ class EngineFactory:
             return None
 
         def policy(request: GenerationRequest) -> bool:
-            decision = self.policy_engine.evaluate(
-                DecisionRequest(
-                    actor=Actor(request.actor_id, "engine", AutonomyLevel.A1),
-                    action=ActionClass.RESEARCH,
-                    reason=request.action,
-                    payload={"prompt": request.prompt},
-                )
-            )
+            decision = self.policy_engine.evaluate(DecisionRequest(
+                actor=Actor(request.actor_id, "engine", AutonomyLevel.A1),
+                action=ActionClass.RESEARCH, reason=request.action,
+                payload={"prompt": request.prompt},
+            ))
             return decision.allowed
 
         def audit(event: str, **metadata: Any) -> None:
-            if event.endswith(".failed"):
-                outcome = "failed"
-            elif event.endswith(".denied"):
-                outcome = "denied"
-            elif event.endswith(".requested"):
-                outcome = "requested"
-            elif event.endswith(".completed"):
-                outcome = "succeeded"
-            else:
-                outcome = "recorded"
-            self.runtime.store.audit(
-                event,
-                str(metadata.get("actor_id", "system")),
-                str(metadata.get("action", "model")),
-                outcome,
-                metadata,
-            )
+            outcome = "failed" if event.endswith(".failed") else "denied" if event.endswith(".denied") else "requested" if event.endswith(".requested") else "succeeded" if event.endswith(".completed") else "recorded"
+            self.runtime.store.audit(event, str(metadata.get("actor_id", "system")), str(metadata.get("action", "model")), outcome, metadata)
 
         return GovernedModelGateway(provider, policy=policy, audit=audit)
 
@@ -109,13 +84,6 @@ class EngineFactory:
         if provider == "tavily":
             return TavilyResearchProvider.from_env()
         return HttpResearchProvider.from_env()
-
-    @staticmethod
-    def _build_knowledge_repository() -> KnowledgeRepository:
-        url = os.getenv("AURELIX_DATABASE_URL", "").strip()
-        if url:
-            return PostgresKnowledgeRepository(url)
-        return InMemoryKnowledgeRepository()
 
     def research_and_store(self, query: str):
         if self.research_to_knowledge is None:
