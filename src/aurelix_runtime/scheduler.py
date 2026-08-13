@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from .job_queue import PersistentJobQueue
 from .job_runner import AutonomyJobRunner
@@ -24,16 +24,17 @@ class SchedulerConfig:
 
 
 class Scheduler:
-    """Governed scheduler feeding the single durable autonomy execution fabric."""
+    """Scheduler feeding the same durable runtime when a Runtime.submit is supplied."""
 
-    APPROVED_JOB_KINDS = frozenset({"research_pipeline", "autonomy.run"})
+    APPROVED_JOB_KINDS = frozenset({"research_pipeline", "autonomy.run", "pipeline.run"})
 
     def __init__(self, submit: Callable[[str, dict[str, str]], str] | None = None,
                  queue: PersistentJobQueue | None = None,
                  config: SchedulerConfig | None = None) -> None:
-        self.queue = queue or PersistentJobQueue()
         self.config = config or SchedulerConfig()
         self.submit = submit or self._submit
+        self._runtime = getattr(submit, "__self__", None) if submit is not None else None
+        self.queue = queue or (PersistentJobQueue(store=self._runtime.store) if self._runtime is not None and hasattr(self._runtime, "store") else PersistentJobQueue())
         self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
         self._stop = threading.Event()
@@ -54,6 +55,12 @@ class Scheduler:
 
     def tick(self) -> list[str]:
         processed: list[str] = []
+        if self._runtime is not None and hasattr(self._runtime, "run_once"):
+            for _ in range(self.config.max_jobs_per_tick):
+                if not self._runtime.run_once():
+                    break
+                processed.append("runtime")
+            return processed
         runner = AutonomyJobRunner(self.queue.store)
         for job in list(self.queue.jobs.values()):
             if len(processed) >= self.config.max_jobs_per_tick:
@@ -65,6 +72,10 @@ class Scheduler:
         return processed
 
     def recover(self) -> int:
+        if self._runtime is not None and hasattr(self._runtime, "store"):
+            recovered = self._runtime.store.recover_running_jobs(self.config.max_attempts)
+            self.queue._refresh()
+            return recovered
         return self.queue.recover_running()
 
     def serve_forever(self) -> None:
