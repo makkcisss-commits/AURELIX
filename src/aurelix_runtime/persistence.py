@@ -4,9 +4,12 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+
+
+TERMINAL_STATUSES = {"completed", "failed"}
 
 
 @dataclass(frozen=True)
@@ -17,31 +20,35 @@ class JobRecord:
     status: str
     attempts: int
     created_at: str
+    updated_at: str | None = None
 
 
 class RuntimeStore:
-    """Durable SQLite state for jobs, results, experiments and audit events."""
+    """Durable SQLite execution state with atomic transitions and recovery."""
 
     def __init__(self, path: str | Path = "aurelix.db") -> None:
         self.path = str(path)
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
         self.db.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         with self.lock, self.db:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA busy_timeout=30000")
             self.db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     payload TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+                    status TEXT NOT NULL CHECK(status IN ('queued','running','interrupted','completed','failed')),
                     attempts INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    heartbeat_at TEXT,
+                    worker_id TEXT,
                     last_error TEXT
                 );
                 CREATE TABLE IF NOT EXISTS job_results (
@@ -75,58 +82,137 @@ class RuntimeStore:
                     observation TEXT NOT NULL,
                     recorded_at TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at);
-                CREATE INDEX IF NOT EXISTS idx_observations_experiment
-                    ON observations(experiment_id, recorded_at);
+                CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at, job_id);
+                CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
+                CREATE INDEX IF NOT EXISTS idx_observations_experiment ON observations(experiment_id, recorded_at);
                 """
             )
+            self._migrate_jobs_schema()
+
+    def _migrate_jobs_schema(self) -> None:
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(jobs)").fetchall()}
+        for name in ("started_at", "heartbeat_at", "worker_id"):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE jobs ADD COLUMN {name} TEXT")
+        self.db.commit()
 
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def enqueue(self, name: str, payload: dict | None = None) -> JobRecord:
+    @staticmethod
+    def _record(row: sqlite3.Row) -> JobRecord:
+        return JobRecord(
+            row["job_id"], row["name"], json.loads(row["payload"]), row["status"],
+            row["attempts"], row["created_at"], row["updated_at"],
+        )
+
+    def enqueue(self, name: str, payload: dict | None = None, execution_id: str | None = None) -> JobRecord:
         now = self._now()
-        job_id = str(uuid4())
+        job_id = execution_id or str(uuid4())
         payload = payload or {}
         with self.lock, self.db:
             self.db.execute(
-                "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at,last_error) VALUES(?,?,?,?,?,?,?,?)",
-                (job_id, name, json.dumps(payload, sort_keys=True), "queued", 0, now, now, None),
+                "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (job_id, name, json.dumps(payload, sort_keys=True), "queued", 0, now, now),
             )
-        return JobRecord(job_id, name, payload, "queued", 0, now)
+        return JobRecord(job_id, name, payload, "queued", 0, now, now)
 
-    def claim_next(self, max_attempts: int = 3) -> JobRecord | None:
-        """Atomically claim one queued job; the stable job ID is reused on retry."""
+    def get(self, job_id: str) -> JobRecord | None:
+        with self.lock:
+            row = self.db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        return self._record(row) if row else None
+
+    def get_result(self, job_id: str) -> dict | None:
+        with self.lock:
+            row = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (job_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def claim_next(self, max_attempts: int = 3, worker_id: str | None = None) -> JobRecord | None:
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 row = self.db.execute(
-                    "SELECT * FROM jobs WHERE status='queued' AND attempts < ? ORDER BY created_at LIMIT 1",
+                    "SELECT * FROM jobs WHERE status='queued' AND attempts < ? ORDER BY created_at, job_id LIMIT 1",
                     (max_attempts,),
                 ).fetchone()
                 if row is None:
                     self.db.rollback()
                     return None
-                now = self._now()
-                cursor = self.db.execute(
-                    "UPDATE jobs SET status='running', attempts=attempts+1, updated_at=? WHERE job_id=? AND status='queued'",
-                    (now, row["job_id"]),
-                )
-                if cursor.rowcount != 1:
-                    self.db.rollback()
-                    return None
-                self.db.commit()
-                return JobRecord(row["job_id"], row["name"], json.loads(row["payload"]), "running", row["attempts"] + 1, row["created_at"])
+                return self._claim_row(row, worker_id)
             except Exception:
                 self.db.rollback()
                 raise
 
-    def claim(self, max_attempts: int = 3) -> JobRecord | None:
-        return self.claim_next(max_attempts)
+    def claim(self, job_id: str, max_attempts: int = 3, worker_id: str | None = None) -> JobRecord | None:
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                if row is None or row["status"] != "queued" or row["attempts"] >= max_attempts:
+                    self.db.rollback()
+                    return None
+                return self._claim_row(row, worker_id)
+            except Exception:
+                self.db.rollback()
+                raise
 
-    def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False) -> None:
-        """Persist the state transition and terminal result atomically."""
+    def _claim_row(self, row: sqlite3.Row, worker_id: str | None) -> JobRecord:
+        now = self._now()
+        cursor = self.db.execute(
+            """UPDATE jobs
+               SET status='running', attempts=attempts+1, updated_at=?,
+                   started_at=COALESCE(started_at, ?), heartbeat_at=?, worker_id=?
+               WHERE job_id=? AND status='queued'""",
+            (now, now, now, worker_id, row["job_id"]),
+        )
+        if cursor.rowcount != 1:
+            self.db.rollback()
+            raise RuntimeError(f"job {row['job_id']} was claimed concurrently")
+        self.db.commit()
+        return JobRecord(row["job_id"], row["name"], json.loads(row["payload"]), "running", row["attempts"] + 1, row["created_at"], now)
+
+    def heartbeat(self, job_id: str, worker_id: str | None = None) -> bool:
+        now = self._now()
+        with self.lock, self.db:
+            cursor = self.db.execute(
+                "UPDATE jobs SET heartbeat_at=?, updated_at=? WHERE job_id=? AND status='running' AND (? IS NULL OR worker_id=?)",
+                (now, now, job_id, worker_id, worker_id),
+            )
+        return cursor.rowcount == 1
+
+    def complete(self, job_id: str, result: dict | None = None) -> dict:
+        """Persist the result and the successful terminal transition atomically."""
+        now = self._now()
+        result = result or {"ok": True}
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                if row is None:
+                    raise KeyError(f"job not found: {job_id}")
+                if row["status"] == "completed":
+                    return self.get_result(job_id) or result
+                if row["status"] != "running":
+                    raise RuntimeError(f"job {job_id} cannot complete from state {row['status']}")
+                self.db.execute(
+                    "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING",
+                    (job_id, json.dumps(result, sort_keys=True), now),
+                )
+                self.db.execute(
+                    "UPDATE jobs SET status='completed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, last_error=NULL WHERE job_id=? AND status='running'",
+                    (now, job_id),
+                )
+                self.db.commit()
+                return result
+            except Exception:
+                self.db.rollback()
+                raise
+
+    def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False, result: dict | None = None) -> None:
+        if success:
+            self.complete(job_id, result or {"ok": True})
+            return
         now = self._now()
         with self.lock, self.db:
             row = self.db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -134,27 +220,31 @@ class RuntimeStore:
                 raise KeyError(f"job not found: {job_id}")
             if row["status"] != "running":
                 raise RuntimeError(f"job {job_id} cannot finish from state {row['status']}")
-            if success:
-                status, result = "completed", {"ok": True}
-            elif retry:
-                status, result = "queued", None
-            else:
-                status, result = "failed", {"ok": False, "error": error or "unknown error"}
+            status = "queued" if retry else "failed"
             self.db.execute(
-                "UPDATE jobs SET status=?, updated_at=?, last_error=? WHERE job_id=? AND status='running'",
+                "UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, last_error=? WHERE job_id=? AND status='running'",
                 (status, now, error, job_id),
             )
-            if result is not None:
+            if not retry:
                 self.db.execute(
-                    "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at",
-                    (job_id, json.dumps(result, sort_keys=True), now),
+                    "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING",
+                    (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now),
                 )
 
     def record_result(self, job_id: str, result: dict) -> None:
+        """Compatibility API; terminal results cannot be overwritten."""
         now = self._now()
         with self.lock, self.db:
+            row = self.db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"job not found: {job_id}")
+            if row["status"] != "running":
+                existing = self.get_result(job_id)
+                if existing == result and row["status"] in TERMINAL_STATUSES:
+                    return
+                raise RuntimeError(f"job {job_id} cannot record a result from state {row['status']}")
             self.db.execute(
-                "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at",
+                "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING",
                 (job_id, json.dumps(result, sort_keys=True), now),
             )
 
@@ -172,46 +262,47 @@ class RuntimeStore:
     def audit(self, event_type: str, actor: str, subject: str, outcome: str, metadata: dict) -> None:
         self.record_audit(subject, event_type, {"actor": actor, "subject": subject, "outcome": outcome, **metadata})
 
-    def recover_running_jobs(self, max_attempts: int = 3) -> int:
-        """Recover jobs left running by an unclean restart without creating retry loops."""
-        now = self._now()
+    def recover_running_jobs(self, max_attempts: int = 3, stale_after_seconds: float = 0.0) -> int:
+        """Recover only stale RUNNING rows; recovery itself is transactional and idempotent."""
+        now_dt = datetime.now(timezone.utc)
+        cutoff = now_dt - timedelta(seconds=max(0.0, stale_after_seconds))
+        now = now_dt.isoformat()
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                rows = self.db.execute(
-                    "SELECT job_id, attempts FROM jobs WHERE status='running'"
-                ).fetchall()
-                if not rows:
-                    self.db.rollback()
-                    return 0
-
+                rows = self.db.execute("SELECT job_id, attempts, heartbeat_at FROM jobs WHERE status='running'").fetchall()
                 recovered = 0
                 for row in rows:
+                    if stale_after_seconds > 0 and row["heartbeat_at"]:
+                        try:
+                            if datetime.fromisoformat(row["heartbeat_at"]) > cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    self.db.execute(
+                        "UPDATE jobs SET status='interrupted', updated_at=?, last_error=? WHERE job_id=? AND status='running'",
+                        (now, "execution interrupted; recovery required", row["job_id"]),
+                    )
                     if row["attempts"] >= max_attempts:
+                        status = "failed"
+                        error = "interrupted after maximum attempts"
                         self.db.execute(
-                            "UPDATE jobs SET status='failed', updated_at=?, last_error=? WHERE job_id=? AND status='running'",
-                            (now, "interrupted after maximum attempts", row["job_id"]),
+                            "UPDATE jobs SET status='failed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, last_error=? WHERE job_id=? AND status='interrupted'",
+                            (now, error, row["job_id"]),
                         )
                         self.db.execute(
-                            "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at",
-                            (row["job_id"], json.dumps({"ok": False, "error": "interrupted after maximum attempts"}, sort_keys=True), now),
+                            "INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING",
+                            (row["job_id"], json.dumps({"ok": False, "error": error}, sort_keys=True), now),
                         )
-                        outcome = "failed"
                     else:
+                        status = "queued"
                         self.db.execute(
-                            "UPDATE jobs SET status='queued', updated_at=?, last_error=? WHERE job_id=? AND status='running'",
-                            (now, "interrupted; queued for recovery", row["job_id"]),
+                            "UPDATE jobs SET status='queued', updated_at=?, heartbeat_at=NULL, worker_id=NULL WHERE job_id=? AND status='interrupted'",
+                            (now, row["job_id"]),
                         )
-                        outcome = "queued"
                     self.db.execute(
                         "INSERT INTO audit_events(event_id,job_id,event_type,payload,created_at) VALUES(?,?,?,?,?)",
-                        (
-                            str(uuid4()),
-                            row["job_id"],
-                            "job.interrupted",
-                            json.dumps({"recovered_at": now, "attempts": row["attempts"], "outcome": outcome}, sort_keys=True),
-                            now,
-                        ),
+                        (str(uuid4()), row["job_id"], "job.interrupted", json.dumps({"recovered_at": now, "attempts": row["attempts"], "outcome": status}, sort_keys=True), now),
                     )
                     recovered += 1
                 self.db.commit()
@@ -223,7 +314,7 @@ class RuntimeStore:
     def recover_running(self) -> int:
         return self.recover_running_jobs()
 
-    def heartbeat(self) -> None:
+    def heartbeat_runtime(self) -> None:
         with self.lock, self.db:
             self.db.execute(
                 "INSERT INTO runtime_state(key,value) VALUES('heartbeat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -234,7 +325,14 @@ class RuntimeStore:
         with self.lock:
             counts = {row[0]: row[1] for row in self.db.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")}
             row = self.db.execute("SELECT value FROM runtime_state WHERE key='heartbeat'").fetchone()
-        return {"heartbeat": row[0] if row else "never", "queued": counts.get("queued", 0), "running": counts.get("running", 0), "succeeded": counts.get("completed", 0), "failed": counts.get("failed", 0)}
+        return {
+            "heartbeat": row[0] if row else "never",
+            "queued": counts.get("queued", 0),
+            "running": counts.get("running", 0),
+            "interrupted": counts.get("interrupted", 0),
+            "succeeded": counts.get("completed", 0),
+            "failed": counts.get("failed", 0),
+        }
 
     def audit_summary(self, limit: int = 20) -> dict:
         with self.lock:
