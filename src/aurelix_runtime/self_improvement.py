@@ -3,21 +3,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from .recovery import RecoveryController
+
 
 class SelfImprovementController:
-    """Connect diagnosis, planning, approval, execution and post-change verification."""
+    """Connect diagnosis, planning, approval, execution, verification and recovery."""
 
     def __init__(self, diagnostics, developer) -> None:
         self.diagnostics = diagnostics
         self.developer = developer
+        self.recovery = RecoveryController(diagnostics.factory.runtime)
 
     def assess(self) -> dict[str, Any]:
         report = self.diagnostics.run()
-        return {
-            "status": report["status"],
-            "report": report,
-            "repair_queue": list(report.get("next_actions", [])),
-        }
+        return {"status": report["status"], "report": report, "repair_queue": list(report.get("next_actions", []))}
 
     def prepare(self, objective: str, scope: list[str] | None = None) -> dict[str, Any]:
         before = self.diagnostics.run()
@@ -28,12 +27,8 @@ class SelfImprovementController:
         before = self.diagnostics.run()
         execution = self.developer.execute(plan, approved=approved)
         if execution.get("status") != "applied":
-            return {"status": execution.get("status", "failed"), "before": before, "execution": execution, "after": before}
+            return {"status": execution.get("status", "failed"), "before": before, "execution": execution, "after": before, "recovery": None}
         after = self.diagnostics.run()
-        return {
-            "status": "verified" if after["status"] in {"ok", "degraded"} else "regression_detected",
-            "before": before,
-            "execution": execution,
-            "after": after,
-            "regression": before["summary"]["failed"] < after["summary"]["failed"],
-        }
+        recovery = self.recovery.decide(before, after, execution)
+        status = "verified" if recovery["decision"] == "accepted" else "regression_detected"
+        return {"status": status, "before": before, "execution": execution, "after": after, "regression": recovery["regression"], "recovery": recovery}
