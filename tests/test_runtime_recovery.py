@@ -1,3 +1,5 @@
+from threading import Barrier, Thread
+
 from aurelix_runtime.persistence import RuntimeStore
 
 
@@ -46,3 +48,28 @@ def test_finished_job_cannot_be_finished_twice(tmp_path):
     else:
         raise AssertionError("a completed job must not be finished twice")
     store.close()
+
+
+def test_two_workers_cannot_claim_same_job(tmp_path):
+    db = tmp_path / "runtime.db"
+    seed = RuntimeStore(db)
+    job = seed.enqueue("demo", {})
+    seed.close()
+
+    barrier = Barrier(2)
+    results = []
+
+    def worker():
+        store = RuntimeStore(db)
+        barrier.wait()
+        results.append(store.claim_next())
+        store.close()
+
+    threads = [Thread(target=worker), Thread(target=worker)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    claimed_ids = [item.job_id for item in results if item is not None]
+    assert claimed_ids == [job.job_id]
