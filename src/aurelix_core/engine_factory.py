@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from .development_providers import DevelopmentModelProvider, development_research_provider
 from .evaluation import EvaluationEngine as CoreEvaluationEngine
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
@@ -45,9 +46,14 @@ class EngineFactory:
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self.policy_engine = PolicyEngine()
-        self.model_provider = model_provider if model_provider is not None else OpenAICompatibleProvider.from_env()
+        development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
+        self.model_provider = model_provider if model_provider is not None else (
+            DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env()
+        )
         self.model_gateway = self._build_model_gateway(self.model_provider)
-        self.research_provider = research_provider if research_provider is not None else self._build_research_provider()
+        self.research_provider = research_provider if research_provider is not None else (
+            development_research_provider if development_mode else self._build_research_provider()
+        )
         self.knowledge: KnowledgeRepository = knowledge or self._build_knowledge_repository()
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
