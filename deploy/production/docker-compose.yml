@@ -32,6 +32,11 @@ services:
       AURELIX_RESEARCH_PROVIDER: tavily
       AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:?set AURELIX_RESEARCH_API_KEY}
       AURELIX_DATABASE_URL: postgresql://aurelix:${POSTGRES_PASSWORD}@postgres:5432/aurelix
+    volumes:
+      # RuntimeStore uses the local SQLite database for durable jobs, audit and
+      # experiment state. Keep it on a named volume so container recreation does
+      # not silently erase that state in the single-host production deployment.
+      - runtime_data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,5 +67,6 @@ services:
 
 volumes:
   postgres_data:
+  runtime_data:
   caddy_data:
   caddy_config:
