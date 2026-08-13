@@ -156,7 +156,11 @@ class AurelixRuntime:
 
     def run_once(self) -> bool:
         self.store.heartbeat()
-        record = self.store.claim(self.config.max_attempts)
+        # `claim()` claims a specific job ID; the worker loop must use the
+        # atomic next-job operation. Passing max_attempts as the first
+        # positional argument silently searched for a numeric job ID and
+        # caused every runtime submission to be reported as idle.
+        record = self.store.claim_next(max_attempts=self.config.max_attempts)
         if not record:
             return False
         job = Job(record.job_id, record.name, {str(k): str(v) for k, v in record.payload.items()}, record.status, record.attempts)
