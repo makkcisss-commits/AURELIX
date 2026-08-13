@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict
+from uuid import uuid4
 
 from .integrated_engines import EngineStore
 from .job_runner import JobExecution, PipelineJobRunner
@@ -36,10 +38,54 @@ class PersistentJobQueue:
         }
 
     def enqueue(self, job_id: str, objective: str) -> QueuedJob:
-        job = self.store.enqueue("pipeline", {"objective": objective}, execution_id=job_id)
-        queued = QueuedJob(job.job_id, objective, job.status, job.attempts)
-        self.jobs[job.job_id] = queued
-        self.engine_store.record("job.queued", job_id=job_id)
+        """Atomically enqueue or return an existing execution for a stable ID.
+
+        The lookup and insert happen in one SQLite write transaction so concurrent
+        callers cannot both observe a missing execution ID and race into a UNIQUE
+        constraint failure. Reusing an ID for a different objective is rejected.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        payload = {"objective": objective}
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                created = row is None
+                if row is not None:
+                    stored_objective = json.loads(row["payload"]).get("objective", "")
+                    if stored_objective != objective:
+                        raise ValueError(
+                            f"execution_id already belongs to a different objective: {job_id}"
+                        )
+                    queued = QueuedJob(
+                        row["job_id"],
+                        stored_objective,
+                        row["status"],
+                        row["attempts"],
+                    )
+                else:
+                    self.store.db.execute(
+                        "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) "
+                        "VALUES(?,?,?,?,?,?,?)",
+                        (
+                            job_id,
+                            "pipeline",
+                            json.dumps(payload, sort_keys=True),
+                            "queued",
+                            0,
+                            now,
+                            now,
+                        ),
+                    )
+                    queued = QueuedJob(job_id, objective, "queued", 0)
+                self.store.db.commit()
+            except Exception:
+                self.store.db.rollback()
+                raise
+
+        self.jobs[queued.job_id] = queued
+        if created:
+            self.engine_store.record("job.queued", job_id=job_id)
         return queued
 
     def claim(self, job_id: str) -> QueuedJob:

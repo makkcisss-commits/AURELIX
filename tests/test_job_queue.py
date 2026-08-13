@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from aurelix_runtime.job_queue import PersistentJobQueue
 from aurelix_runtime.persistence import RuntimeStore
 
@@ -26,13 +28,42 @@ def test_running_jobs_are_recoverable(tmp_path):
     queue.close()
 
 
-def test_execution_id_is_unique(tmp_path):
+def test_execution_id_is_idempotent_for_same_objective(tmp_path):
+    queue = make_queue(tmp_path)
+    first = queue.enqueue("same-id", "first")
+    second = queue.enqueue("same-id", "first")
+    assert second.job_id == first.job_id
+    assert second.status == "queued"
+    assert second.attempts == 0
+    assert queue.store.status()["queued"] == 1
+    queue.close()
+
+
+def test_execution_id_cannot_be_reused_for_different_objective(tmp_path):
     queue = make_queue(tmp_path)
     queue.enqueue("same-id", "first")
     try:
         queue.enqueue("same-id", "second")
-    except Exception as exc:
-        assert "UNIQUE" in str(exc).upper() or "constraint" in str(exc).lower()
+    except ValueError as exc:
+        assert "different objective" in str(exc)
     else:
-        raise AssertionError("duplicate execution_id must be rejected")
+        raise AssertionError("execution_id reuse with a different request must be rejected")
     queue.close()
+
+
+def test_execution_id_is_idempotent_under_concurrent_queues(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    queues = [PersistentJobQueue(RuntimeStore(db_path)), PersistentJobQueue(RuntimeStore(db_path))]
+
+    def enqueue(queue):
+        return queue.enqueue("concurrent-id", "same objective")
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(enqueue, queues))
+        assert [result.job_id for result in results] == ["concurrent-id", "concurrent-id"]
+        assert all(result.objective == "same objective" for result in results)
+        assert queues[0].store.status()["queued"] == 1
+    finally:
+        for queue in queues:
+            queue.close()
