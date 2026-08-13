@@ -12,6 +12,6 @@ def test_runtime_retries_before_terminal_failure(tmp_path: Path):
     assert runtime.run_once() is True
     assert runtime.store.status()["failed"] == 1
     rows = runtime.store.db.execute(
-        "SELECT event_type FROM audit WHERE subject=? ORDER BY created_at", (job_id,)
+        "SELECT event_type FROM audit_events WHERE job_id=? ORDER BY created_at", (job_id,)
     ).fetchall()
     assert [row[0] for row in rows] == ["job.queued", "job.retry", "job.failed"]
