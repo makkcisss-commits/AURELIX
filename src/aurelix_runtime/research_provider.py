@@ -113,7 +113,7 @@ def _generic_results(results: list[Any]) -> list[Evidence]:
             continue
         source = str(result.get("source", "")).strip()
         claim = str(result.get("claim", "")).strip()
-        if not source or not claim or not _valid_source_url(source):
+        if not source or not claim:
             continue
         try:
             confidence = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
