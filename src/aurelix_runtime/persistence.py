@@ -248,7 +248,7 @@ class RuntimeStore:
         self.record_audit(subject, event_type, {"actor": actor, "subject": subject, "outcome": outcome, **metadata})
 
     def recover_running_jobs(self, max_attempts: int = 3, stale_after_seconds: float = 0.0) -> int:
-        """Recover stale RUNNING rows without ever turning an interruption into success."""
+        """Recover stale RUNNING rows without re-executing a job with a durable result."""
         now_dt = datetime.now(timezone.utc)
         cutoff = now_dt - timedelta(seconds=max(0.0, stale_after_seconds))
         now = now_dt.isoformat()
@@ -264,6 +264,14 @@ class RuntimeStore:
                                 continue
                         except ValueError:
                             pass
+
+                    durable = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (row["job_id"],)).fetchone()
+                    if durable is not None:
+                        self.db.execute("UPDATE jobs SET status='completed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, last_error=NULL WHERE job_id=? AND status='running'", (now, row["job_id"]))
+                        self.db.execute("INSERT INTO audit_events(event_id,job_id,event_type,payload,created_at) VALUES(?,?,?,?,?)", (str(uuid4()), row["job_id"], "job.recovered", json.dumps({"recovered_at": now, "attempts": row["attempts"], "outcome": "completed_from_durable_result"}, sort_keys=True), now))
+                        recovered += 1
+                        continue
+
                     final_status = "failed" if row["attempts"] >= max_attempts else "queued"
                     error = "interrupted after maximum attempts" if final_status == "failed" else "interrupted; queued for recovery"
                     if self._supports_interrupted:
