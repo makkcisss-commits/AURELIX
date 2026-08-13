@@ -17,13 +17,7 @@ from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
 
-app = FastAPI(
-    title="AURELIX Private API",
-    version="0.2.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
+app = FastAPI(title="AURELIX Private API", version="0.3.0", docs_url=None, redoc_url=None, openapi_url=None)
 
 _OWNER_ID = os.getenv("AURELIX_OWNER_ID", "owner")
 _OWNER_SECRET = os.getenv("AURELIX_OWNER_SECRET")
@@ -50,37 +44,28 @@ class ExperimentExecutionRequest(BaseModel):
     observations: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DevelopmentRequest(BaseModel):
+    objective: str = Field(min_length=1, max_length=2000)
+    scope: list[str] = Field(default_factory=list, max_length=30)
+
+
+class DevelopmentApprovalRequest(BaseModel):
+    plan: dict[str, Any]
+    approved: bool
+
+
 def _live_snapshot() -> dict:
     if _factory is None or _runtime is None:
-        return {
-            **SystemSnapshot(system="DEGRADED").public(),
-            "error": "runtime_initialization_failed",
-            "error_type": _factory_error,
-        }
-
+        return {**SystemSnapshot(system="DEGRADED").public(), "error": "runtime_initialization_failed", "error_type": _factory_error}
     runtime_status = _runtime.store.status()
     experiments = _runtime.query_experiments()
     recent_knowledge = _factory.knowledge.search(KnowledgeQuery("", limit=10))
     return {
         **SystemSnapshot().public(),
         "runtime": runtime_status,
-        "providers": {
-            "model_configured": _factory.model_provider is not None,
-            "research_configured": _factory.research_provider is not None,
-            "knowledge_backend": type(_factory.knowledge).__name__,
-        },
-        "experiments": {
-            "total": len(experiments),
-            "active": len([x for x in experiments if x["status"] in {"proposed", "running", "measuring", "evaluation"}]),
-            "completed": len([x for x in experiments if x["status"] == "complete"]),
-        },
-        "knowledge": {
-            "total_items": _factory.knowledge.count(),
-            "recent": [
-                {"id": item.id, "title": item.title, "tags": item.tags, "created_at": item.created_at}
-                for item in recent_knowledge
-            ],
-        },
+        "providers": {"model_configured": _factory.model_provider is not None, "research_configured": _factory.research_provider is not None, "knowledge_backend": type(_factory.knowledge).__name__},
+        "experiments": {"total": len(experiments), "active": len([x for x in experiments if x["status"] in {"proposed", "running", "measuring", "evaluation"}]), "completed": len([x for x in experiments if x["status"] == "complete"])},
+        "knowledge": {"total_items": _factory.knowledge.count(), "recent": [{"id": item.id, "title": item.title, "tags": item.tags, "created_at": item.created_at} for item in recent_knowledge]},
         "audit_events": _runtime.store.audit_summary(20)["recent"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -93,22 +78,14 @@ def _experiments(status_filter: str | None):
 def _knowledge(query: str, limit: int):
     if _factory is None:
         return []
-    return [
-        {"id": item.id, "title": item.title, "content": item.content, "tags": item.tags, "created_at": item.created_at}
-        for item in _factory.knowledge.search(KnowledgeQuery(query, limit=limit))
-    ]
+    return [{"id": item.id, "title": item.title, "content": item.content, "tags": item.tags, "created_at": item.created_at} for item in _factory.knowledge.search(KnowledgeQuery(query, limit=limit))]
 
 
 def _audit(limit: int):
     return _runtime.store.audit_summary(limit)["recent"] if _runtime is not None else []
 
 
-_api = PrivateReadOnlyApi(
-    DashboardService(snapshot_provider=_live_snapshot),
-    experiments=_experiments,
-    knowledge=_knowledge,
-    audit=_audit,
-)
+_api = PrivateReadOnlyApi(DashboardService(snapshot_provider=_live_snapshot), experiments=_experiments, knowledge=_knowledge, audit=_audit)
 
 
 def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOnlyRequest:
@@ -119,8 +96,7 @@ def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOn
 
 @app.get("/health", include_in_schema=False)
 def health():
-    response = _api.get_health()
-    return response.body
+    return _api.get_health().body
 
 
 @app.get("/ready", include_in_schema=False)
@@ -138,6 +114,13 @@ def snapshot(request: ReadOnlyRequest = Depends(require_owner)):
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["error"])
     return response.body
+
+
+@app.get("/v1/control/diagnostics")
+def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
+    if _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    return _factory.diagnose()
 
 
 @app.get("/v1/control/experiments")
@@ -177,11 +160,7 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
 
 
 @app.post("/v1/actions/experiments/{experiment_id}/execute")
-def execute_experiment(
-    experiment_id: str,
-    payload: ExperimentExecutionRequest,
-    request: ReadOnlyRequest = Depends(require_owner),
-):
+def execute_experiment(experiment_id: str, payload: ExperimentExecutionRequest, request: ReadOnlyRequest = Depends(require_owner)):
     if _flow is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     try:
@@ -192,6 +171,20 @@ def execute_experiment(
         raise HTTPException(status_code=422, detail=f"experiment_execution_failed: {type(exc).__name__}") from exc
 
 
+@app.post("/v1/system/developer/plan")
+def developer_plan(payload: DevelopmentRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    if _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    return _factory.plan_system_change(payload.objective, payload.scope or None)
+
+
+@app.post("/v1/system/developer/approve")
+def developer_approve(payload: DevelopmentApprovalRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    if _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    return _factory.system_developer.approve(payload.plan, payload.approved)
+
+
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 if _WEB_ROOT.is_dir():
     app.mount("/", StaticFiles(directory=_WEB_ROOT, html=True), name="web")
@@ -199,13 +192,7 @@ if _WEB_ROOT.is_dir():
 
 def main() -> None:
     import uvicorn
-
-    uvicorn.run(
-        "aurelix_core.server:app",
-        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
-        port=int(os.getenv("AURELIX_PORT", "8000")),
-        reload=False,
-    )
+    uvicorn.run("aurelix_core.server:app", host=os.getenv("AURELIX_HOST", "127.0.0.1"), port=int(os.getenv("AURELIX_PORT", "8000")), reload=False)
 
 
 if __name__ == "__main__":
