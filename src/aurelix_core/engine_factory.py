@@ -7,9 +7,11 @@ from typing import Any
 
 from .development_providers import DevelopmentModelProvider, development_research_provider
 from .evaluation import EvaluationEngine as CoreEvaluationEngine
+from .economic_feedback import EconomicFeedback
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .policy import PolicyEngine
+from .revenue_portfolio import RevenuePortfolio
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.integrated_engines import (
     AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
@@ -62,6 +64,8 @@ class EngineFactory:
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
         self.business = BusinessEngine(require_approval=True)
+        self.revenue_portfolio = RevenuePortfolio()
+        self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(
             runtime_store=self.runtime.store,
             knowledge_repository=self.knowledge,
@@ -134,6 +138,12 @@ class EngineFactory:
 
     def self_improvement_execute(self, plan: dict[str, Any], *, approved: bool = False):
         return self.self_improvement.execute_and_verify(plan, approved=approved)
+
+    def economic_snapshot(self):
+        return self.economic_feedback.snapshot()
+
+    def economic_learning_context(self):
+        return self.economic_feedback.learning_context()
 
     def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
         if self.model_gateway is None:
