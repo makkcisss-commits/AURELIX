@@ -2,6 +2,7 @@ from pathlib import Path
 
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.integrated_engines import EngineStore, Evidence, ResearchEngine
+from aurelix_runtime.knowledge_store import KnowledgeQuery, SQLiteKnowledgeRepository
 from aurelix_runtime.persistence import RuntimeStore
 
 
@@ -27,6 +28,11 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     assert run.business["status"] == "awaiting_validation"
     assert store.get(run.execution_id).status == "completed"
     assert durable["status"] == "awaiting_validation"
+
+    durable_knowledge = SQLiteKnowledgeRepository(store)
+    items = durable_knowledge.search(KnowledgeQuery("validated fact", tags=("validated",)))
+    assert len(items) == 1
+    assert items[0].content == "validated fact"
     fabric.close()
 
     reopened = RuntimeStore(db)
@@ -36,6 +42,24 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     assert engines.opportunities == {}
     assert any(event["event"] == "knowledge.stored" for event in engines.audit)
     assert reopened.get_result(run.execution_id)["status"] == "awaiting_validation"
+    reopened.close()
+
+
+def test_knowledge_repository_is_restart_safe_and_queryable(tmp_path: Path) -> None:
+    db = tmp_path / "knowledge.db"
+    store = RuntimeStore(db)
+    repo = SQLiteKnowledgeRepository(store)
+    item = __import__("aurelix_runtime.integrated_engines", fromlist=["KnowledgeItem"]).KnowledgeItem(
+        "k1", "Market fact", "A durable fact", [Evidence("source", "A durable fact", 1.0, True)], ["market", "validated"]
+    )
+    repo.put(item)
+    assert repo.count() == 1
+    store.close()
+
+    reopened = RuntimeStore(db)
+    repo2 = SQLiteKnowledgeRepository(reopened)
+    found = repo2.search(KnowledgeQuery("durable", tags=("validated",)))
+    assert found and found[0].id == "k1"
     reopened.close()
 
 
