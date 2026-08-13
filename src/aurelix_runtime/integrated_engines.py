@@ -205,13 +205,24 @@ class ExperimentEngine:
 
 class EvaluationEngine:
     name = "evaluation"
+
     def run(self, experiment: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
-        if not experiment.get("experiment_id"):
-            result = {"experiment_id": None, "passed": False, "reason": "awaiting_experiment"}
+        experiment_id = experiment.get("experiment_id")
+        result = experiment.get("result") or {}
+        if not experiment_id:
+            evaluation = {"experiment_id": None, "passed": False, "reason": "awaiting_experiment"}
+        elif "passed" not in result:
+            evaluation = {"experiment_id": experiment_id, "passed": False, "reason": "awaiting_execution"}
         else:
-            result = {"experiment_id": experiment["experiment_id"], "passed": False, "reason": "awaiting_execution"}
-        store.record("evaluation.completed", **result)
-        return result
+            evaluation = {
+                "experiment_id": experiment_id,
+                "passed": bool(result.get("passed")),
+                "confidence": float(result.get("confidence", 0.0)),
+                "reason": "experiment_completed" if result.get("passed") else "experiment_failed",
+                "metrics": result.get("metrics", {}),
+            }
+        store.record("evaluation.completed", **evaluation)
+        return evaluation
 
 
 class OpportunityEngine:
@@ -220,7 +231,7 @@ class OpportunityEngine:
         if not evaluation.get("passed"):
             store.record("opportunity.blocked", reason=evaluation.get("reason", "evaluation_failed"))
             return {"opportunity_id": None, "status": "awaiting_validation", "reason": evaluation.get("reason", "evaluation_failed")}
-        opportunity = Opportunity(str(uuid4()), "Validated opportunity", "Generated from evaluated evidence.", status="validated", confidence=1.0)
+        opportunity = Opportunity(str(uuid4()), "Validated opportunity", "Generated from evaluated evidence.", status="validated", confidence=float(evaluation.get("confidence", 0.0)))
         store.opportunities[opportunity.id] = opportunity
         store.record("opportunity.proposed", opportunity_id=opportunity.id)
         return {"opportunity_id": opportunity.id, "status": opportunity.status, "confidence": opportunity.confidence}
