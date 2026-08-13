@@ -33,11 +33,24 @@
       <form id="access-form" class="decision">
         <div>
           <label for="owner-secret"><b>Owner secret</b></label>
-          <small>Used only for this browser session to read the protected control API.</small>
+          <small>Used only for this browser session to access the protected control API.</small>
         </div>
         <input id="owner-secret" name="owner-secret" type="password" autocomplete="current-password" placeholder="AURELIX_OWNER_SECRET" required>
         <button type="submit">Connect</button>
       </form>
+    </section>
+
+    <section class="panel" aria-label="Research action">
+      <div class="panel-head"><h3>Intelligence pipeline</h3><span>OWNER AUTHORIZED</span></div>
+      <form id="research-form" class="decision">
+        <div>
+          <label for="research-query"><b>Research objective</b></label>
+          <small>Runs the governed Research → Academy → Knowledge → Innovation → Experiment → Evaluation path.</small>
+        </div>
+        <input id="research-query" name="research-query" type="text" minlength="1" maxlength="2000" placeholder="Enter a research objective" required>
+        <button type="submit">Run research</button>
+      </form>
+      <pre id="research-result" class="muted" aria-live="polite">Authenticate to run the intelligence pipeline.</pre>
     </section>
 
     <section class="grid" aria-label="System status">
@@ -61,7 +74,7 @@
         <div class="panel-head"><h3>Providers</h3><span class="live"><span class="dot"></span> CONFIG</span></div>
         <div class="decision"><div><b>Model provider</b><small>Governed generation backend</small></div><span id="model-provider">—</span></div>
         <div class="decision"><div><b>Research provider</b><small>Evidence acquisition backend</small></div><span id="research-provider">—</span></div>
-        <p class="muted">This dashboard reports configuration and read-only state. It does not execute protected actions.</p>
+        <p class="muted">Protected actions remain authenticated and governed by the server.</p>
       </article>
     </section>
 
