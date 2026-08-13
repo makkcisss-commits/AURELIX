@@ -20,25 +20,17 @@ def test_running_job_recovers_once_after_restart(tmp_path):
     assert recovered.job_id == job.job_id
     assert recovered.attempts == 2
 
-    second.finish(recovered.job_id, True)
-    with second.lock:
-        row = second.db.execute(
-            "SELECT status, attempts FROM jobs WHERE job_id=?", (job.job_id,)
-        ).fetchone()
-        result = second.db.execute(
-            "SELECT result FROM job_results WHERE job_id=?", (job.job_id,)
-        ).fetchone()
-    assert row["status"] == "completed"
-    assert row["attempts"] == 2
-    assert result is not None
+    second.finish(recovered.job_id, True, result={"ok": True, "value": 42})
+    assert second.get_result(job.job_id) == {"ok": True, "value": 42}
+    assert second.complete(job.job_id, {"ok": True, "value": 999}) == {"ok": True, "value": 42}
+    assert second.get_result(job.job_id) == {"ok": True, "value": 42}
     second.close()
 
 
 def test_finished_job_cannot_be_finished_twice(tmp_path):
     store = RuntimeStore(tmp_path / "runtime.db")
     job = store.enqueue("demo", {})
-    claimed = store.claim_next()
-    assert claimed is not None
+    assert store.claim_next() is not None
     store.finish(job.job_id, True)
 
     try:
@@ -47,6 +39,22 @@ def test_finished_job_cannot_be_finished_twice(tmp_path):
         assert "cannot finish" in str(exc)
     else:
         raise AssertionError("a completed job must not be finished twice")
+    store.close()
+
+
+def test_failure_never_becomes_success(tmp_path):
+    store = RuntimeStore(tmp_path / "runtime.db")
+    job = store.enqueue("demo", {})
+    assert store.claim_next() is not None
+    store.finish(job.job_id, False, "boom", retry=False)
+    assert store.get(job.job_id).status == "failed"
+    assert store.get_result(job.job_id) == {"ok": False, "error": "boom"}
+    try:
+        store.complete(job.job_id, {"ok": True})
+    except RuntimeError as exc:
+        assert "cannot complete" in str(exc)
+    else:
+        raise AssertionError("a failed execution must never become successful")
     store.close()
 
 
