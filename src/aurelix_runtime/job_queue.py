@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from .integrated_engines import EngineStore
-from .job_runner import PipelineJobRunner
+from .job_runner import JobExecution, PipelineJobRunner
 from .persistence import RuntimeStore
 
 
@@ -19,11 +19,7 @@ class QueuedJob:
 
 
 class PersistentJobQueue:
-    """Worker-facing queue backed by RuntimeStore.
-
-    ``jobs`` is a compatibility cache; SQLite is the source of truth for
-    lifecycle, retries, idempotency and crash recovery.
-    """
+    """Worker-facing queue backed by RuntimeStore."""
 
     def __init__(self, store: RuntimeStore | None = None, engine_store: EngineStore | None = None):
         self.store = store or RuntimeStore()
@@ -35,9 +31,7 @@ class PersistentJobQueue:
         with self.store.lock:
             rows = self.store.db.execute("SELECT job_id, payload, status, attempts FROM jobs").fetchall()
         self.jobs = {
-            row["job_id"]: QueuedJob(
-                row["job_id"], json.loads(row["payload"]).get("objective", ""), row["status"], row["attempts"]
-            )
+            row["job_id"]: QueuedJob(row["job_id"], json.loads(row["payload"]).get("objective", ""), row["status"], row["attempts"])
             for row in rows
         }
 
@@ -72,6 +66,16 @@ class PersistentJobQueue:
         return recovered
 
     def execute(self, job_id: str, runner: PipelineJobRunner | None = None) -> Any:
+        existing = self.store.get(job_id)
+        if existing is None:
+            raise KeyError(f"unknown job: {job_id}")
+        if existing.status == "completed":
+            durable = self.store.get_result(job_id) or {"status": "completed", "result": {}}
+            return JobExecution(job_id, durable.get("status", "completed"), durable.get("result", {}))
+        if existing.status == "failed":
+            durable = self.store.get_result(job_id) or {"ok": False, "error": "execution failed"}
+            return JobExecution(job_id, "failed", durable)
+
         job = self.claim(job_id)
         runner = runner or PipelineJobRunner()
         try:
