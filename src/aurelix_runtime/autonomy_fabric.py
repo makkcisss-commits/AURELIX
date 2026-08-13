@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, is_dataclass, asdict
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +11,7 @@ from .integrated_engines import (
     ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine,
     ResearchEngine,
 )
-from .persistence import RuntimeStore
+from .persistence import JobRecord, RuntimeStore
 
 
 def _jsonable(value: Any) -> Any:
@@ -38,7 +39,7 @@ class AutonomyRun:
 
 
 class AutonomyFabric:
-    """Run the complete research-to-business chain under one execution."""
+    """Run the complete research-to-business chain under one durable execution."""
 
     def __init__(self, store: RuntimeStore | None = None, engine_store: EngineStore | None = None,
                  research: ResearchEngine | None = None, academy: AcademyEngine | None = None,
@@ -56,14 +57,31 @@ class AutonomyFabric:
         self.opportunity = opportunity or OpportunityEngine()
         self.business = business or BusinessEngine(require_approval=True)
 
-    def run(self, objective: str, execution_id: str | None = None) -> AutonomyRun:
-        execution_id = execution_id or str(uuid4())
-        job = self.store.enqueue("autonomy.run", {"objective": objective}, execution_id=execution_id)
-        worker_id = f"autonomy:{execution_id}"
-        claimed = self.store.claim(job.job_id, worker_id=worker_id)
-        if claimed is None:
-            raise RuntimeError(f"autonomy execution is not claimable: {execution_id}")
-        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": worker_id})
+    def _heartbeat_loop(self, execution_id: str, worker_id: str, lease_token: str, stop: threading.Event) -> None:
+        interval = max(0.25, min(self.store.lease_seconds / 3.0, 5.0))
+        while not stop.wait(interval):
+            if not self.store.heartbeat(execution_id, worker_id, lease_token):
+                return
+
+    def run_claimed(self, claimed: JobRecord) -> AutonomyRun:
+        """Execute an already-claimed job without creating a second lifecycle."""
+        if claimed.status != "running" or not claimed.worker_id or not claimed.lease_token:
+            raise RuntimeError(f"execution is not actively owned: {claimed.job_id}")
+        execution_id = claimed.job_id
+        objective = str(claimed.payload.get("objective", "")).strip()
+        if not objective:
+            self.store.finish(execution_id, False, "research objective is required", retry=False,
+                              worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+            raise ValueError("research objective is required")
+
+        stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(execution_id, claimed.worker_id, claimed.lease_token, stop),
+            name=f"aurelix-lease-{execution_id}", daemon=True,
+        )
+        heartbeat.start()
+        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id})
         try:
             research = self.research.run(objective, self.engines)
             self.store.record_audit(execution_id, "autonomy.research", {"evidence_count": len(research.get("evidence", []))})
@@ -81,13 +99,26 @@ class AutonomyFabric:
                 "innovation": innovation, "experiment": experiment, "evaluation": evaluation,
                 "opportunity": opportunity, "business": business,
             })
-            self.store.complete(execution_id, result, worker_id=worker_id, lease_token=claimed.lease_token)
-            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": worker_id})
+            self.store.complete(execution_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id})
             return AutonomyRun(**result)
         except Exception as exc:
-            self.store.finish(execution_id, False, str(exc), retry=False, worker_id=worker_id, lease_token=claimed.lease_token)
+            self.store.finish(execution_id, False, str(exc), retry=False,
+                              worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__})
             raise
+        finally:
+            stop.set()
+            heartbeat.join(timeout=max(1.0, self.store.lease_seconds / 2.0))
+
+    def run(self, objective: str, execution_id: str | None = None) -> AutonomyRun:
+        execution_id = execution_id or str(uuid4())
+        job = self.store.enqueue("autonomy.run", {"objective": objective}, execution_id=execution_id)
+        worker_id = f"autonomy:{execution_id}"
+        claimed = self.store.claim(job.job_id, worker_id=worker_id)
+        if claimed is None:
+            raise RuntimeError(f"autonomy execution is not claimable: {execution_id}")
+        return self.run_claimed(claimed)
 
     def close(self) -> None:
         self.store.close()
