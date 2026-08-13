@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, is_dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
@@ -10,7 +10,7 @@ from uuid import uuid4
 from aurelix_core.evaluation import EvaluationEngine
 from .experiment_runner import ExperimentRunner
 from .integrated_engines import Experiment
-from .persistence import LeaseLostError, RuntimeStore
+from .persistence import JobRecord, LeaseLostError, RuntimeStore
 from .pipeline_runner import GovernedPipeline
 
 
@@ -33,8 +33,18 @@ class Job:
     lease_token: str | None = None
 
 
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
 class AurelixRuntime:
-    """24/7 orchestration loop with durable, fenced execution ownership."""
+    """24/7 orchestration loop with one durable, fenced execution fabric."""
 
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         self.config = config or RuntimeConfig()
@@ -45,24 +55,46 @@ class AurelixRuntime:
         if self.config.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
         self.store = RuntimeStore(self.config.database_path, lease_seconds=self.config.heartbeat_seconds)
-        self.handlers: dict[str, Callable[[dict[str, str]], None]] = {}
+        self.handlers: dict[str, Callable[[dict[str, str]], Any]] = {}
+        self.claimed_handlers: dict[str, Callable[[JobRecord], Any]] = {}
         self._stop = threading.Event()
         self.worker_id = str(uuid4())
         stale_after = max(self.config.heartbeat_seconds * 2.0, 1.0)
         self.store.recover_running_jobs(self.config.max_attempts, stale_after_seconds=stale_after)
 
-    def register(self, kind: str, handler: Callable[[dict[str, str]], None]) -> None:
+    def register(self, kind: str, handler: Callable[[dict[str, str]], Any]) -> None:
         if not kind.strip():
             raise ValueError("job kind is required")
         self.handlers[kind] = handler
+        self.claimed_handlers.pop(kind, None)
+
+    def register_claimed(self, kind: str, handler: Callable[[JobRecord], Any]) -> None:
+        """Register a handler that executes the current claim, not a nested job."""
+        if not kind.strip():
+            raise ValueError("job kind is required")
+        self.claimed_handlers[kind] = handler
+        self.handlers.pop(kind, None)
+
+    def register_autonomy(self, kind: str = "autonomy.run") -> None:
+        """Mount the full research→knowledge→experiment→business fabric on this runtime."""
+        from .autonomy_fabric import AutonomyFabric
+
+        fabric = AutonomyFabric(store=self.store)
+
+        def handle(record: JobRecord) -> Any:
+            return fabric.run_claimed(record)
+
+        self.register_claimed(kind, handle)
 
     def register_pipeline(self, pipeline: GovernedPipeline | None = None, kind: str = "pipeline.run") -> None:
         governed = pipeline or GovernedPipeline()
+
         def handle(payload: dict[str, str]) -> None:
             objective = payload.get("objective", "").strip()
             if not objective:
                 raise ValueError("pipeline objective is required")
             governed.run(objective, business_approved=False)
+
         self.register(kind, handle)
 
     def register_experiment(self, experiment: Experiment) -> None:
@@ -111,7 +143,7 @@ class AurelixRuntime:
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
-        if kind not in self.handlers:
+        if kind not in self.handlers and kind not in self.claimed_handlers:
             raise ValueError(f"unregistered job kind: {kind}")
         record = self.store.enqueue(kind, payload or {})
         self.store.audit("job.queued", "runtime", record.job_id, "queued", {"kind": kind})
@@ -135,8 +167,12 @@ class AurelixRuntime:
                                              name=f"aurelix-heartbeat-{job.job_id[:8]}", daemon=True)
         heartbeat_thread.start()
         try:
-            self.handlers[job.kind](job.payload)
-            self.store.complete(job.job_id, {"ok": True}, worker_id=job.worker_id, lease_token=job.lease_token)
+            if job.kind in self.claimed_handlers:
+                output = self.claimed_handlers[job.kind](record)
+            else:
+                output = self.handlers[job.kind](job.payload)
+            result = _jsonable(output) if output is not None else {"ok": True}
+            self.store.complete(job.job_id, result, worker_id=job.worker_id, lease_token=job.lease_token)
             self.store.audit("job.completed", "runtime", job.job_id, "succeeded", {"kind": job.kind})
         except LeaseLostError as exc:
             self.store.audit("job.lease_lost", "runtime", job.job_id, "aborted", {"kind": job.kind, "error": str(exc)})
