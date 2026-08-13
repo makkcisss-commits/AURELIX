@@ -72,7 +72,8 @@ def test_research_knowledge_innovation_experiment_evaluation(tmp_path: Path):
 
 
 def test_complete_intelligence_flow_and_execution(tmp_path: Path):
-    runtime = AurelixRuntime(RuntimeConfig(database_path=str(tmp_path / "flow.db")))
+    database_path = str(tmp_path / "flow.db")
+    runtime = AurelixRuntime(RuntimeConfig(database_path=database_path))
     repository = InMemoryKnowledgeRepository()
 
     def research_provider(query: str):
@@ -108,3 +109,12 @@ def test_complete_intelligence_flow_and_execution(tmp_path: Path):
     assert stored.result is not None
     assert stored.result["passed"] is True
     assert runtime.query_experiment_observations(experiment_id) == [{"success": 1.0}]
+
+    # Restart the runtime against the same database: durable state must survive
+    # the process boundary.
+    restarted = AurelixRuntime(RuntimeConfig(database_path=database_path))
+    restored = restarted.get_experiment(experiment_id)
+    assert restored.status == "complete"
+    assert restored.result is not None
+    assert restored.result["passed"] is True
+    assert restarted.query_experiment_observations(experiment_id) == [{"success": 1.0}]
