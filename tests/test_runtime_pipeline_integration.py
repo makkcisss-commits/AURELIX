@@ -11,9 +11,10 @@ def test_runtime_executes_registered_governed_pipeline(tmp_path: Path):
     status = runtime.store.status()
     assert status["succeeded"] == 1
     assert status["failed"] == 0
-    # The queued job is durable and the audit trail records its completion.
+    # The queued job is durable and the canonical audit trail records its completion.
     rows = runtime.store.db.execute(
-        "SELECT event_type, outcome, subject FROM audit WHERE subject=? ORDER BY created_at",
+        "SELECT event_type, json_extract(payload, '$.outcome') AS outcome, job_id AS subject "
+        "FROM audit_events WHERE job_id=? ORDER BY created_at",
         (job_id,),
     ).fetchall()
     assert [row["event_type"] for row in rows] == ["job.queued", "job.completed"]
