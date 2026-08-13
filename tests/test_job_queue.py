@@ -26,13 +26,24 @@ def test_running_jobs_are_recoverable(tmp_path):
     queue.close()
 
 
-def test_execution_id_is_unique(tmp_path):
+def test_execution_id_is_idempotent_for_same_objective(tmp_path):
+    queue = make_queue(tmp_path)
+    first = queue.enqueue("same-id", "first")
+    second = queue.enqueue("same-id", "first")
+    assert second.job_id == first.job_id
+    assert second.status == "queued"
+    assert second.attempts == 0
+    assert queue.store.status()["queued"] == 1
+    queue.close()
+
+
+def test_execution_id_cannot_be_reused_for_different_objective(tmp_path):
     queue = make_queue(tmp_path)
     queue.enqueue("same-id", "first")
     try:
         queue.enqueue("same-id", "second")
-    except Exception as exc:
-        assert "UNIQUE" in str(exc).upper() or "constraint" in str(exc).lower()
+    except ValueError as exc:
+        assert "different objective" in str(exc)
     else:
-        raise AssertionError("duplicate execution_id must be rejected")
+        raise AssertionError("execution_id reuse with a different request must be rejected")
     queue.close()
