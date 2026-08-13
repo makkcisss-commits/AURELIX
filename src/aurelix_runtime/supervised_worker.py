@@ -1,4 +1,4 @@
-"""Worker loop guarded by durable queue state and retry limits."""
+"""Worker loop guarded by durable queue state and fenced execution leases."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .job_queue import PersistentJobQueue
 from .job_runner import PipelineJobRunner
+from .persistence import LeaseLostError
 
 
 @dataclass
@@ -42,19 +43,25 @@ class SupervisedWorker:
                     continue
                 job.status = "running"
                 job.attempts = claimed.attempts
+                job.worker_id = claimed.worker_id
+                job.lease_token = claimed.lease_token
                 self.queue.jobs[job.job_id] = job
                 result = self.runner.execute(job.job_id, job.objective)
-                self.queue.store.complete(job.job_id, {"ok": True, "status": result.status, "result": result.result})
+                self.queue.store.complete(job.job_id, {"ok": True, "status": result.status, "result": result.result},
+                                           worker_id=job.worker_id, lease_token=job.lease_token)
                 job.status = "completed"
                 self.queue.jobs[job.job_id] = job
+            except LeaseLostError as exc:
+                self.queue.engine_store.record("job.lease_lost", job_id=job.job_id, error=str(exc))
             except Exception as exc:
                 retry = job.attempts < self.config.max_attempts
                 try:
-                    self.queue.store.finish(job.job_id, False, str(exc), retry=retry)
+                    self.queue.store.finish(job.job_id, False, str(exc), retry=retry,
+                                            worker_id=job.worker_id, lease_token=job.lease_token)
                     job.status = "queued" if retry else "failed"
                     self.queue.jobs[job.job_id] = job
-                except RuntimeError:
-                    pass
+                except LeaseLostError as lease_exc:
+                    self.queue.engine_store.record("job.lease_lost", job_id=job.job_id, error=str(lease_exc))
             processed.append(job.job_id)
         return processed
 
