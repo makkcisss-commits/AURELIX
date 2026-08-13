@@ -36,10 +36,18 @@ class AurelixRuntime:
 
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         self.config = config or RuntimeConfig()
+        if self.config.heartbeat_seconds <= 0:
+            raise ValueError("heartbeat_seconds must be positive")
+        if self.config.worker_poll_seconds <= 0:
+            raise ValueError("worker_poll_seconds must be positive")
+        if self.config.max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
         self.store = RuntimeStore(self.config.database_path)
         self.handlers: dict[str, Callable[[dict[str, str]], None]] = {}
         self._stop = threading.Event()
-        self.store.recover_running()
+        self.worker_id = str(uuid4())
+        stale_after = max(self.config.heartbeat_seconds * 2.0, 1.0)
+        self.store.recover_running_jobs(self.config.max_attempts, stale_after_seconds=stale_after)
 
     def register(self, kind: str, handler: Callable[[dict[str, str]], None]) -> None:
         if not kind.strip():
@@ -154,16 +162,25 @@ class AurelixRuntime:
         self.store.audit("job.queued", "runtime", record.job_id, "queued", {"kind": kind})
         return record.job_id
 
+    def _heartbeat_loop(self, job_id: str, stop_event: threading.Event) -> None:
+        interval = max(self.config.heartbeat_seconds / 2.0, 0.1)
+        while not stop_event.wait(interval):
+            self.store.heartbeat(job_id, self.worker_id)
+
     def run_once(self) -> bool:
         self.store.heartbeat()
-        # `claim()` claims a specific job ID; the worker loop must use the
-        # atomic next-job operation. Passing max_attempts as the first
-        # positional argument silently searched for a numeric job ID and
-        # caused every runtime submission to be reported as idle.
-        record = self.store.claim_next(max_attempts=self.config.max_attempts)
+        record = self.store.claim_next(max_attempts=self.config.max_attempts, worker_id=self.worker_id)
         if not record:
             return False
         job = Job(record.job_id, record.name, {str(k): str(v) for k, v in record.payload.items()}, record.status, record.attempts)
+        heartbeat_stop = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(job.job_id, heartbeat_stop),
+            name=f"aurelix-heartbeat-{job.job_id[:8]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
         try:
             self.handlers[job.kind](job.payload)
             self.store.finish(job.job_id, True)
@@ -178,6 +195,9 @@ class AurelixRuntime:
                 "queued" if retry else "failed",
                 {"kind": job.kind, "error": str(exc), "attempt": job.attempts},
             )
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=max(self.config.heartbeat_seconds, 1.0))
         return True
 
     def serve_forever(self) -> None:
