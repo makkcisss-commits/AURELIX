@@ -54,11 +54,10 @@ class Scheduler:
         self.schedules.append(schedule)
 
     def tick(self) -> list[str]:
+        """Process at most one due job per tick and never double-run a runtime."""
         processed: list[str] = []
         if self._runtime is not None and hasattr(self._runtime, "run_once"):
-            for _ in range(self.config.max_jobs_per_tick):
-                if not self._runtime.run_once():
-                    break
+            if self._runtime.run_once():
                 processed.append("runtime")
             return processed
         runner = AutonomyJobRunner(self.queue.store)
@@ -79,7 +78,7 @@ class Scheduler:
         return self.queue.recover_running()
 
     def serve_forever(self) -> None:
-        next_run = {s.name: time.monotonic() for s in self.schedules}
+        next_run = {s.name: time.monotonic() + s.interval_seconds for s in self.schedules}
         while not self._stop.is_set():
             now = time.monotonic()
             for schedule in self.schedules:
