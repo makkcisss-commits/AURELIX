@@ -13,6 +13,7 @@ from .integrated_engines import (
     ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine,
     ResearchEngine,
 )
+from .knowledge_store import SQLiteKnowledgeRepository
 from .persistence import JobRecord, RuntimeStore
 from .research_provider import HttpResearchProvider
 
@@ -50,7 +51,10 @@ class AutonomyFabric:
                  experiment: ExperimentEngine | None = None, evaluation: EvaluationEngine | None = None,
                  opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None) -> None:
         self.store = store or RuntimeStore()
-        self.engines = engine_store or EngineStore(runtime_store=self.store)
+        # Knowledge is stored in the same RuntimeStore database as executions,
+        # so research -> learning -> opportunity does not split across stores.
+        self.knowledge_repository = SQLiteKnowledgeRepository(self.store)
+        self.engines = engine_store or EngineStore(runtime_store=self.store, knowledge_repository=self.knowledge_repository)
         configured_provider = HttpResearchProvider.from_env()
         self.research = research or ResearchEngine(provider=configured_provider)
         self.academy = academy or AcademyEngine()
