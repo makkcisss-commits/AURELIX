@@ -1,7 +1,7 @@
 """Single durable orchestration boundary for AURELIX autonomy."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, asdict
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +11,16 @@ from .integrated_engines import (
     ResearchEngine,
 )
 from .persistence import RuntimeStore
+
+
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -64,13 +74,13 @@ class AutonomyFabric:
             evaluation = self.evaluation.run(experiment, self.engines)
             opportunity = self.opportunity.run(evaluation, self.engines)
             business = self.business.run(opportunity, approved=False)
-            result = {
+            result = _jsonable({
                 "execution_id": execution_id,
                 "status": "awaiting_approval" if business.get("status") == "awaiting_approval" else "completed",
                 "research": research, "academy": academy, "knowledge": knowledge,
                 "innovation": innovation, "experiment": experiment, "evaluation": evaluation,
                 "opportunity": opportunity, "business": business,
-            }
+            })
             self.store.complete(execution_id, result, worker_id=worker_id, lease_token=claimed.lease_token)
             self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": worker_id})
             return AutonomyRun(**result)
