@@ -33,10 +33,7 @@ class AurelixSystem:
         self.runtime = AurelixRuntime(self.config.runtime)
         if self.config.enable_autonomy:
             self.runtime.register_autonomy()
-        self.scheduler = Scheduler(
-            submit=self.runtime.submit,
-            config=self.config.scheduler,
-        )
+        self.scheduler = Scheduler(submit=self.runtime.submit, config=self.config.scheduler)
         self._stop = threading.Event()
         self._started = False
 
@@ -49,15 +46,9 @@ class AurelixSystem:
         return "stopping" if self._stop.is_set() else ("running" if self._started else "stopped")
 
     def schedule_autonomy(self, name: str, interval_seconds: float, objective: str) -> None:
-        """Add a durable autonomy scan to the common scheduler."""
         if not objective.strip():
             raise ValueError("objective is required")
-        self.scheduler.add(Schedule(
-            name=name,
-            interval_seconds=interval_seconds,
-            job_kind="autonomy.run",
-            payload={"objective": objective},
-        ))
+        self.scheduler.add(Schedule(name, interval_seconds, "autonomy.run", {"objective": objective}))
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
         return self.runtime.submit(kind, payload or {})
@@ -85,22 +76,12 @@ class AurelixSystem:
         self.runtime.store.audit("system.stopped", "system", "system", "stopped", {})
 
     def run_forever(self) -> None:
-        """Run scheduling and execution as one lifecycle until stopped."""
+        """Run schedule cadence and execution through the same scheduler/runtime."""
         self.start()
         try:
-            while not self._stop.is_set():
-                now_work = self._tick_schedules()
-                if not now_work:
-                    self._stop.wait(self.config.runtime.worker_poll_seconds)
+            self.scheduler.serve_forever()
         finally:
             self.stop()
-
-    def _tick_schedules(self) -> bool:
-        # Scheduler owns cadence; Runtime owns every actual execution.
-        # Keeping the call in this composition root prevents a second worker
-        # loop from appearing beside the canonical runtime.
-        self.scheduler.tick()
-        return bool(self.scheduler.schedules)
 
     def health(self) -> dict[str, Any]:
         return {
