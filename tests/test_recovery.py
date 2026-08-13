@@ -9,7 +9,12 @@ def test_recovery_finalizes_running_job_with_durable_result(tmp_path: Path) -> N
     claimed = store.claim(job.job_id, worker_id="worker-1")
     assert claimed is not None
 
-    store.record_result(job.job_id, {"ok": True, "value": 42})
+    store.record_result(
+        job.job_id,
+        {"ok": True, "value": 42},
+        worker_id=claimed.worker_id,
+        lease_token=claimed.lease_token,
+    )
 
     assert store.recover_running_jobs(max_attempts=3, stale_after_seconds=0) == 1
     recovered = store.get(job.job_id)
