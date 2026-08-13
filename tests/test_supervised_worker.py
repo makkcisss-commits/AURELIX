@@ -13,7 +13,7 @@ def test_supervised_worker_processes_queued_job_and_heartbeats(tmp_path):
     assert processed == ["job-1"]
     assert worker.heartbeat_count == 1
     assert queue.jobs["job-1"].status == "completed"
-    assert queue.store.get_result("job-1")["status"] == "awaiting_approval"
+    assert queue.store.get_result("job-1")["status"] == "awaiting_validation"
     queue.close()
 
 

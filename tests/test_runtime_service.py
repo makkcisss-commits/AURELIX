@@ -14,7 +14,7 @@ def test_runtime_lifecycle_and_job_execution(tmp_path):
     assert runtime.status == "running"
     runtime.tick()
     assert queue.jobs["job-1"].status == "completed"
-    assert queue.store.get_result("job-1")["status"] == "awaiting_approval"
+    assert queue.store.get_result("job-1")["status"] == "awaiting_validation"
     runtime.stop()
     assert runtime.status == "stopping"
     queue.close()

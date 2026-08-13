@@ -24,7 +24,7 @@ class PipelineJobRunner:
 
     def execute(self, job_id: str, objective: str, approved: bool = False) -> JobExecution:
         result = self.pipeline.run(objective, business_approved=approved)
-        status = "awaiting_approval" if result.business["status"] == "awaiting_approval" else "ready_for_execution"
+        status = result.business.get("status", "completed")
         self.pipeline.store.record("job.completed", job_id=job_id, status=status)
         return JobExecution(job_id, status, {"business": result.business})
 
