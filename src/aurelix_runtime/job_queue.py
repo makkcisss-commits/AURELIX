@@ -80,6 +80,14 @@ class PersistentJobQueue:
         runner = runner or PipelineJobRunner()
         try:
             result = runner.execute(job.job_id, job.objective)
+            if result.status == "failed":
+                error = result.result.get("error", "execution failed")
+                self.store.finish(job.job_id, False, str(error), retry=False)
+                job.status = "failed"
+                self.jobs[job_id] = job
+                self.engine_store.record("job.failed", job_id=job_id, error=str(error), retry=False)
+                return result
+
             self.store.complete(job.job_id, {"ok": True, "status": result.status, "result": result.result})
             job.status = "completed"
             self.jobs[job_id] = job
