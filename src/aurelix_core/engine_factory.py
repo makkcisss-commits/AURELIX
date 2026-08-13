@@ -19,6 +19,8 @@ from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledge
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
+from aurelix_runtime.system_diagnostics import SystemDiagnostics
+from aurelix_runtime.system_developer import SystemDeveloper
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,8 @@ class EngineFactory:
         )
         self.experiment_runner = self.runtime.create_experiment_runner()
         self.core_evaluation = CoreEvaluationEngine()
+        self.diagnostics = SystemDiagnostics(self)
+        self.system_developer = SystemDeveloper(self.diagnostics)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
         if provider is None:
@@ -104,6 +108,13 @@ class EngineFactory:
     def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
         """Run the complete connected specialist chain through one durable boundary."""
         return self.enterprise.run(objective, approved=approved)
+
+    def diagnose(self):
+        """Return a live, actionable system health report."""
+        return self.diagnostics.run()
+
+    def plan_system_change(self, objective: str, scope: list[str] | None = None):
+        return self.system_developer.plan(objective, scope)
 
     def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
         if self.model_gateway is None:
