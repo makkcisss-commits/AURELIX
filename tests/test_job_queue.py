@@ -7,7 +7,7 @@ def make_queue(tmp_path): return PersistentJobQueue(RuntimeStore(tmp_path / "run
 def test_queue_claim_execute_and_recovery(tmp_path):
     queue = make_queue(tmp_path); queue.enqueue("job-1", "objective")
     result = queue.execute("job-1")
-    assert result.status == "awaiting_approval"; assert queue.jobs["job-1"].status == "completed"; assert queue.store.get_result("job-1")["status"] == "awaiting_approval"; queue.close()
+    assert result.status == "awaiting_validation"; assert queue.jobs["job-1"].status == "completed"; assert queue.store.get_result("job-1")["status"] == "awaiting_validation"; queue.close()
 
 def test_running_jobs_are_recoverable(tmp_path):
     queue = make_queue(tmp_path); queue.enqueue("job-2", "objective"); queue.claim("job-2")
