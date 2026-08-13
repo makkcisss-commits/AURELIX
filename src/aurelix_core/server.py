@@ -123,6 +123,13 @@ def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
     return _factory.diagnose()
 
 
+@app.get("/v1/control/validation")
+def validation(request: ReadOnlyRequest = Depends(require_owner)):
+    if _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    return _factory.validate_system()
+
+
 @app.get("/v1/control/experiments")
 def experiments(status_filter: str | None = Query(default=None, alias="status"), request: ReadOnlyRequest = Depends(require_owner)):
     response = _api.get_experiments(request, status_filter)
