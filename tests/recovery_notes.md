@@ -1,0 +1,1 @@
+Recovery invariant: a stale RUNNING job with a durable result is finalized as COMPLETED and must never be re-executed.
