@@ -34,6 +34,7 @@ class Scheduler:
         self.queue = queue or PersistentJobQueue()
         self.config = config or SchedulerConfig()
         self.submit = submit or self._submit
+        self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
         self._stop = threading.Event()
 
@@ -47,24 +48,21 @@ class Scheduler:
     def add(self, schedule: Schedule) -> None:
         if schedule.interval_seconds < 1:
             raise ValueError("interval_seconds must be >= 1")
-        if schedule.job_kind not in self.APPROVED_JOB_KINDS:
+        if self._uses_default_submit and schedule.job_kind not in self.APPROVED_JOB_KINDS:
             raise PermissionError(f"job kind not approved: {schedule.job_kind}")
         self.schedules.append(schedule)
 
     def tick(self) -> list[str]:
         processed: list[str] = []
         runner = AutonomyJobRunner(self.queue.store)
-        try:
-            for job in list(self.queue.jobs.values()):
-                if len(processed) >= self.config.max_jobs_per_tick:
-                    break
-                if job.status != "queued" or job.attempts >= self.config.max_attempts:
-                    continue
-                self.queue.execute(job.job_id, runner)
-                processed.append(job.job_id)
-            return processed
-        finally:
-            runner.close()
+        for job in list(self.queue.jobs.values()):
+            if len(processed) >= self.config.max_jobs_per_tick:
+                break
+            if job.status != "queued" or job.attempts >= self.config.max_attempts:
+                continue
+            self.queue.execute(job.job_id, runner)
+            processed.append(job.job_id)
+        return processed
 
     def recover(self) -> int:
         return self.queue.recover_running()
