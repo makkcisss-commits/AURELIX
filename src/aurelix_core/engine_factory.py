@@ -22,6 +22,7 @@ from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
 from aurelix_runtime.system_developer import SystemDeveloper
+from aurelix_runtime.system_validation import SystemValidation
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class EngineFactory:
         self.core_evaluation = CoreEvaluationEngine()
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
+        self.system_validation = SystemValidation(self)
         self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
@@ -112,6 +114,9 @@ class EngineFactory:
 
     def diagnose(self):
         return self.diagnostics.run()
+
+    def validate_system(self):
+        return self.system_validation.run()
 
     def plan_system_change(self, objective: str, scope: list[str] | None = None):
         return self.system_developer.plan(objective, scope)
