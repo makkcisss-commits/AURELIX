@@ -20,6 +20,9 @@ def main() -> None:
     provider = HttpResearchProvider.from_env()
     pipeline = GovernedPipeline(research_engine=ResearchEngine(provider=provider))
     runtime.register_pipeline(pipeline)
+    # Mount the complete autonomy fabric on the same RuntimeStore and worker loop.
+    # This prevents scheduler/worker/autonomy from creating independent lifecycles.
+    runtime.register_autonomy()
     if args.control:
         server = serve_private_control(runtime)
         server.serve_forever()
