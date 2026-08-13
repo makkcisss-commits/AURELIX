@@ -1,10 +1,11 @@
+import time
+
 from aurelix_runtime.job_queue import PersistentJobQueue
 from aurelix_runtime.supervised_worker import SupervisedWorker, WorkerConfig
+from aurelix_runtime.persistence import RuntimeStore
 
 
 def test_supervised_worker_processes_queued_job_and_heartbeats(tmp_path):
-    from aurelix_runtime.persistence import RuntimeStore
-
     queue = PersistentJobQueue(RuntimeStore(tmp_path / "runtime.db"))
     queue.enqueue("job-1", "objective")
     worker = SupervisedWorker(queue, WorkerConfig(max_jobs=1, max_attempts=2))
@@ -17,12 +18,28 @@ def test_supervised_worker_processes_queued_job_and_heartbeats(tmp_path):
 
 
 def test_worker_recovery_requeues_running_jobs(tmp_path):
-    from aurelix_runtime.persistence import RuntimeStore
-
     queue = PersistentJobQueue(RuntimeStore(tmp_path / "runtime.db"))
     queue.enqueue("job-2", "objective")
     queue.claim("job-2")
     worker = SupervisedWorker(queue)
-    assert worker.recover() == 1
+    assert worker.recover(stale_after_seconds=0) == 1
     assert queue.jobs["job-2"].status == "queued"
+    queue.close()
+
+
+def test_supervised_worker_renews_lease_during_long_execution(tmp_path):
+    store = RuntimeStore(tmp_path / "runtime.db", lease_seconds=1.0)
+    queue = PersistentJobQueue(store)
+    queue.enqueue("job-long", "objective")
+    worker = SupervisedWorker(queue, WorkerConfig(max_jobs=1, max_attempts=2))
+
+    class SlowRunner:
+        def execute(self, job_id, objective):
+            time.sleep(1.3)
+            return type("Result", (), {"status": "completed", "result": {"slow": True}})()
+
+    worker.runner = SlowRunner()
+    assert worker.run_once() == ["job-long"]
+    assert store.get("job-long").status == "completed"
+    assert store.get_result("job-long") == {"ok": True, "status": "completed", "result": {"slow": True}}
     queue.close()

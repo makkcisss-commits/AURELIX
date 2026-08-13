@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .job_queue import PersistentJobQueue
-from .job_runner import PipelineJobRunner
+from .job_runner import AutonomyJobRunner
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,9 @@ class SchedulerConfig:
 
 
 class Scheduler:
-    """Governed scheduler: recurring schedules enqueue only approved job kinds."""
+    """Governed scheduler feeding the single durable autonomy execution fabric."""
+
+    APPROVED_JOB_KINDS = frozenset({"research_pipeline", "autonomy.run"})
 
     def __init__(self, submit: Callable[[str, dict[str, str]], str] | None = None,
                  queue: PersistentJobQueue | None = None,
@@ -32,11 +34,12 @@ class Scheduler:
         self.queue = queue or PersistentJobQueue()
         self.config = config or SchedulerConfig()
         self.submit = submit or self._submit
+        self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
         self._stop = threading.Event()
 
     def _submit(self, job_kind: str, payload: dict[str, str]) -> str:
-        if job_kind != "research_pipeline":
+        if job_kind not in self.APPROVED_JOB_KINDS:
             raise PermissionError(f"job kind not approved: {job_kind}")
         job_id = f"scheduled-{job_kind}-{time.time_ns()}"
         self.queue.enqueue(job_id, payload.get("objective", ""))
@@ -45,11 +48,13 @@ class Scheduler:
     def add(self, schedule: Schedule) -> None:
         if schedule.interval_seconds < 1:
             raise ValueError("interval_seconds must be >= 1")
+        if self._uses_default_submit and schedule.job_kind not in self.APPROVED_JOB_KINDS:
+            raise PermissionError(f"job kind not approved: {schedule.job_kind}")
         self.schedules.append(schedule)
 
     def tick(self) -> list[str]:
         processed: list[str] = []
-        runner = PipelineJobRunner()
+        runner = AutonomyJobRunner(self.queue.store)
         for job in list(self.queue.jobs.values()):
             if len(processed) >= self.config.max_jobs_per_tick:
                 break
