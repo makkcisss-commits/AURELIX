@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 
 def test_unified_system_cycle_connects_intelligence_and_governance(monkeypatch, tmp_path):
@@ -40,22 +41,18 @@ def test_system_cycle_routes_through_canonical_economic_feedback(monkeypatch, tm
 
         def run(objective, *, approved=False, economic_feedback=None):
             captured.update(objective=objective, approved=approved, economic_feedback=economic_feedback)
-            return type(
-                "Cycle",
-                (),
-                {
-                    "objective": objective,
-                    "research": {"status": "completed"},
-                    "academy": {"lessons": []},
-                    "knowledge": {"knowledge_id": None},
-                    "innovation": {},
-                    "experiment": {},
-                    "evaluation": {},
-                    "opportunity": {},
-                    "business": {},
-                    "status": "awaiting_validation",
-                },
-            )()
+            return SimpleNamespace(
+                objective=objective,
+                research={"status": "completed"},
+                academy={"lessons": []},
+                knowledge={"knowledge_id": None},
+                innovation={},
+                experiment={},
+                evaluation={},
+                opportunity={},
+                business={},
+                status="awaiting_validation",
+            )
 
         monkeypatch.setattr(factory.enterprise, "run", run)
         monkeypatch.setattr(factory.system_orchestrator, "_project_academy", lambda *args: {"status": "awaiting_knowledge"})
