@@ -1,6 +1,8 @@
 """Bridge verified economic outcomes into traceable Academy knowledge."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from .academy import AcademyEngine, Knowledge
 from .economic_learning_adapter import EconomicLearningAdapter
 
@@ -11,6 +13,7 @@ class EconomicAcademyBridge:
     def __init__(self, academy: AcademyEngine, learning: EconomicLearningAdapter) -> None:
         self.academy = academy
         self.learning = learning
+        self._published: set[tuple[tuple[str, Decimal, Decimal, bool], ...]] = set()
 
     def publish(self) -> list[Knowledge]:
         evidence = self.learning.evidence()
@@ -18,9 +21,23 @@ class EconomicAcademyBridge:
         if not evidence:
             return []
 
+        signature = tuple(
+            sorted(
+                (
+                    item.source_id,
+                    item.observed_daily_eur,
+                    item.expected_daily_eur,
+                    item.productive,
+                )
+                for item in evidence
+            )
+        )
+        if signature in self._published:
+            return []
+
         refs = tuple(item.source_id for item in evidence)
-        observed = sum((item.observed_daily_eur for item in evidence), start=0)
-        expected = sum((item.expected_daily_eur for item in evidence), start=0)
+        observed = sum((item.observed_daily_eur for item in evidence), start=Decimal("0"))
+        expected = sum((item.expected_daily_eur for item in evidence), start=Decimal("0"))
         productive = sum(1 for item in evidence if item.productive)
         confidence = min(1.0, max(0.0, productive / len(evidence)))
 
@@ -35,4 +52,5 @@ class EconomicAcademyBridge:
             source_refs=list(refs),
             confidence=confidence,
         )
+        self._published.add(signature)
         return [knowledge]
