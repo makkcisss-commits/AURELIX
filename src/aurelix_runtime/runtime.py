@@ -157,10 +157,15 @@ class AurelixRuntime:
 
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
-    def register_experiment_runner(self, executor: ExperimentExecutor, kind: str = "experiment.run") -> None:
+    def register_experiment_runner(
+        self,
+        executor: ExperimentExecutor,
+        kind: str = "experiment.run",
+        runner: ExperimentRunner | None = None,
+    ) -> ExperimentRunner:
         if executor is None:
             raise ValueError("experiment executor is required")
-        runner = self.create_experiment_runner(executor)
+        runner = runner or self.create_experiment_runner(executor)
 
         def handle(payload: dict[str, str]) -> Any:
             experiment_id = payload.get("experiment_id", "").strip()
@@ -172,6 +177,7 @@ class AurelixRuntime:
             return runner.execute(experiment)
 
         self.register(kind, handle)
+        return runner
 
     def submit_experiment(self, experiment: Experiment, kind: str = "experiment.run") -> str:
         if kind not in self.handlers and kind not in self.claimed_handlers:
