@@ -76,6 +76,7 @@ def test_governor_blocks_high_risk_before_runtime():
     assert result.executed is False
     assert called is False
     assert result.observed_revenue_eur == Decimal("0")
+    assert bridge.revenue.sources == {}
 
 
 def test_resource_scope_still_applies_after_governor_allows():
@@ -97,3 +98,5 @@ def test_resource_scope_still_applies_after_governor_allows():
             permission=wrong_scope,
             operation=lambda: {"revenue_eur": "50"},
         )
+
+    assert bridge.revenue.sources == {}
