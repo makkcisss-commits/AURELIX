@@ -5,6 +5,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from .academy_agent import AcademyAgent
+from .capability_escalation import CapabilityEscalator
+from .continuous_intelligence import ContinuousIntelligence
 from .development_providers import DevelopmentModelProvider, development_research_provider
 from .evaluation import EvaluationEngine as CoreEvaluationEngine
 from .economic_feedback import EconomicFeedback
@@ -60,9 +63,12 @@ class EngineFactory:
         )
         self.knowledge: KnowledgeRepository = knowledge or SQLiteKnowledgeRepository(self.runtime.store)
         self.knowledge_learning = KnowledgeLearningService(self.knowledge)
+        self.continuous_intelligence = ContinuousIntelligence()
+        self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
+        self.academy_agent = AcademyAgent(self.academy)
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
         self.experiment = ExperimentEngine()
@@ -86,8 +92,6 @@ class EngineFactory:
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
         if self.config.register_autonomy:
-            # Mount the runtime worker on the exact same engines and EngineStore
-            # used by EnterpriseLoop. This prevents a second hidden composition.
             self.autonomy_fabric = AutonomyFabric(
                 store=self.runtime.store,
                 engine_store=self.enterprise.store,
@@ -100,6 +104,7 @@ class EngineFactory:
                 opportunity=self.opportunity,
                 business=self.business,
                 message_fabric=self.message_fabric,
+                capability_escalator=self.capability_escalator,
             )
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         self.experiment_runner = self.runtime.create_experiment_runner()
@@ -141,13 +146,8 @@ class EngineFactory:
         return self.research_to_knowledge.research_and_store(query)
 
     def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
-        """Run one enterprise cycle using the latest verified economic feedback."""
         economic_feedback = self.economic_learning_context()
-        return self.enterprise.run(
-            objective,
-            approved=approved,
-            economic_feedback=economic_feedback,
-        )
+        return self.enterprise.run(objective, approved=approved, economic_feedback=economic_feedback)
 
     def run_system_cycle(self, objective: str):
         return self.system_orchestrator.run_cycle(objective)
