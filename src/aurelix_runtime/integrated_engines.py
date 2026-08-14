@@ -98,10 +98,7 @@ class EngineStore:
         self.audit = self._read_state("engine.audit") or []
 
     def _persist(self) -> None:
-        self._write_state(
-            "engine.knowledge",
-            {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()},
-        )
+        self._write_state("engine.knowledge", {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()})
         if self.knowledge_repository is not None:
             for item in self.knowledge.values():
                 self.knowledge_repository.put(item)
@@ -191,17 +188,12 @@ class InnovationEngine:
 
 class ExperimentEngine:
     name = "experiment"
-
     def run(self, innovation: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
         """Create an experiment proposal; execution belongs to ExperimentRunner."""
         if innovation.get("status") != "proposal":
             store.record("experiment.blocked", reason=innovation.get("status", "unknown"))
             return {"experiment_id": None, "status": "awaiting_innovation", "criteria": []}
-        exp = Experiment(
-            str(uuid4()),
-            innovation.get("proposed_solution", innovation.get("title", "unknown")),
-            [{"metric":"success","operator":">=","target":1.0}],
-        )
+        exp = Experiment(str(uuid4()), innovation.get("proposed_solution", innovation.get("title", "unknown")), [{"metric":"success","operator":">=","target":1.0}])
         store.experiments[exp.id] = exp
         store.record("experiment.proposed", experiment_id=exp.id)
         return {"experiment_id": exp.id, "status": exp.status, "criteria": exp.success_criteria}
@@ -221,19 +213,30 @@ class EvaluationEngine:
 
 class OpportunityEngine:
     name = "opportunity"
-    def run(self, evaluation: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
+    def run(self, evaluation: Dict[str, Any], store: EngineStore, *, economic_feedback: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        economic_feedback = economic_feedback or {}
+        feedback_ratio = float(economic_feedback.get("average_realization_ratio", 0.0) or 0.0)
+        feedback_sources = int(economic_feedback.get("productive_sources", 0) or 0)
+        feedback_note = (
+            f"Prior verified economics: {feedback_ratio:.4f} realization ratio across "
+            f"{feedback_sources} productive source(s)."
+            if feedback_sources else "No prior verified economic signal is available."
+        )
         if evaluation.get("passed"):
-            opportunity = Opportunity(str(uuid4()), "Validated opportunity", "Generated from evaluated evidence.", status="validated", confidence=float(evaluation.get("confidence", 0.0)))
+            confidence = float(evaluation.get("confidence", 0.0))
+            if feedback_sources:
+                confidence = min(1.0, max(0.0, confidence * (0.75 + min(feedback_ratio, 1.5) * 0.25)))
+            opportunity = Opportunity(str(uuid4()), "Validated opportunity", "Generated from evaluated evidence. " + feedback_note, status="validated", confidence=confidence)
             store.opportunities[opportunity.id] = opportunity
-            store.record("opportunity.validated", opportunity_id=opportunity.id, confidence=opportunity.confidence, validation_scope=evaluation.get("execution_mode", "unknown"))
-            return {"opportunity_id": opportunity.id, "status": opportunity.status, "confidence": opportunity.confidence, "validation_scope": evaluation.get("execution_mode", "unknown"), "financial_outcome_verified": evaluation.get("financial_outcome_verified", False)}
+            store.record("opportunity.validated", opportunity_id=opportunity.id, confidence=opportunity.confidence, validation_scope=evaluation.get("execution_mode", "unknown"), economic_feedback=economic_feedback)
+            return {"opportunity_id": opportunity.id, "status": opportunity.status, "confidence": opportunity.confidence, "validation_scope": evaluation.get("execution_mode", "unknown"), "financial_outcome_verified": evaluation.get("financial_outcome_verified", False), "economic_feedback": economic_feedback}
         if evaluation.get("experiment_id") and evaluation.get("reason") == "awaiting_execution":
-            opportunity = Opportunity(str(uuid4()), "Candidate opportunity", "Derived from evidence and awaiting experiment validation.", status="candidate", confidence=0.0)
+            opportunity = Opportunity(str(uuid4()), "Candidate opportunity", "Derived from evidence and awaiting experiment validation. " + feedback_note, status="candidate", confidence=0.0)
             store.opportunities[opportunity.id] = opportunity
-            store.record("opportunity.candidate", opportunity_id=opportunity.id, experiment_id=evaluation["experiment_id"])
-            return {"opportunity_id": opportunity.id, "status": opportunity.status, "confidence": opportunity.confidence, "requires_validation": True}
-        store.record("opportunity.blocked", reason=evaluation.get("reason", "evaluation_failed"))
-        return {"opportunity_id": None, "status": "awaiting_validation", "reason": evaluation.get("reason", "evaluation_failed")}
+            store.record("opportunity.candidate", opportunity_id=opportunity.id, experiment_id=evaluation["experiment_id"], economic_feedback=economic_feedback)
+            return {"opportunity_id": opportunity.id, "status": opportunity.status, "confidence": opportunity.confidence, "requires_validation": True, "economic_feedback": economic_feedback}
+        store.record("opportunity.blocked", reason=evaluation.get("reason", "evaluation_failed"), economic_feedback=economic_feedback)
+        return {"opportunity_id": None, "status": "awaiting_validation", "reason": evaluation.get("reason", "evaluation_failed"), "economic_feedback": economic_feedback}
 
 
 class BusinessEngine:
