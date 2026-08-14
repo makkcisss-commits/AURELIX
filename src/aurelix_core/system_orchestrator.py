@@ -9,7 +9,7 @@ from .academy import AcademyEngine as CuratedAcademy
 from .academy_governor_boundary import AcademyGovernorBoundary, AcademyProposal
 from .academy_intelligence_bridge import AcademyIntelligenceBridge
 from .continuous_intelligence import ContinuousIntelligence
-from .economic_attribution import EconomicAttribution, EconomicAttributionLedger
+from .economic_attribution import EconomicAttributionLedger
 from .governor import Governor
 from .learning import LearningEngine, Outcome
 from .verified_economic_learning import VerifiedEconomicLearning
@@ -37,15 +37,15 @@ class SystemOrchestrator:
 
     def __init__(self, factory) -> None:
         self.factory = factory
-        self.intelligence = factory.continuous_intelligence if hasattr(factory, "continuous_intelligence") else ContinuousIntelligence()
-        self.adaptive_loop = getattr(factory, "adaptive_loop", None)
+        self.intelligence = factory.continuous_intelligence
+        self.adaptive_loop = factory.adaptive_loop
         self.curated_academy = CuratedAcademy()
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
         self.economic_ledger = EconomicAttributionLedger()
         self.verified_learning = VerifiedEconomicLearning(self.economic_ledger)
         self.learning = LearningEngine()
-        self.governor = factory.governor if hasattr(factory, "governor") else Governor()
+        self.governor = factory.governor
         self._proposals: dict[str, AcademyProposal] = {}
 
     def run_cycle(self, objective: str) -> SystemCycleResult:
@@ -70,7 +70,6 @@ class SystemOrchestrator:
 
     @staticmethod
     def _as_mapping(value: Any) -> dict[str, Any]:
-        """Normalize canonical cycle results while retaining computed properties."""
         if is_dataclass(value):
             result = asdict(value)
         elif isinstance(value, Mapping):
@@ -105,6 +104,31 @@ class SystemOrchestrator:
         self._proposals[proposal.proposal_id] = proposal
         decision = self.governor.route(source="academy", action="proposal.review", requires_capital=False, risk=2, production_change=False)
         return {"proposal_id": proposal.proposal_id, "route": decision.route.value, "request_id": decision.request_id, "reasons": list(decision.reasons), "execution_allowed": False}
+
+    def record_verified_economic_outcome(self, **kwargs):
+        """Record a verified realized outcome; never accepts unverified economics."""
+        entry = self.economic_ledger.record(verified=True, **kwargs)
+        self.factory.runtime.store.audit(
+            "economic.outcome.verified",
+            "system_orchestrator",
+            entry.opportunity_id,
+            "recorded",
+            {"source_id": entry.source_id, "governor_decision_id": entry.governor_decision_id, "external_reference": entry.external_reference},
+        )
+        return entry
+
+    def status(self) -> dict[str, Any]:
+        """Expose a compact operational snapshot of the shared enterprise state."""
+        signals = self.verified_learning.signals()
+        learning_items = len(getattr(self.learning, "_items", {}))
+        return {
+            "status": "operational",
+            "shared_intelligence": self.intelligence is self.factory.continuous_intelligence,
+            "shared_adaptive_loop": self.adaptive_loop is self.factory.adaptive_loop,
+            "learning_items": learning_items,
+            "verified_economic_signals": len(signals),
+            "pending_proposals": len(self._proposals),
+        }
 
     def _emit_economic_learning(self) -> dict[str, Any]:
         fresh = self.verified_learning.emit()
