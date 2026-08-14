@@ -10,6 +10,7 @@ from aurelix_core.governor import Governor, GovernorRoute
 
 from .message_fabric import AgentMessage, MessageFabric
 from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
+from .orchestrator import Orchestrator
 from .runtime import AurelixRuntime, RuntimeConfig
 from .scheduler import Schedule, Scheduler, SchedulerConfig
 
@@ -36,12 +37,13 @@ class AurelixSystem:
         self._owns_runtime = runtime is None
         self.governor = governor or Governor()
         self.fabric = MessageFabric()
+        self.orchestrator = Orchestrator(runtime=self.runtime, governor=self.governor)
         self.mission = EconomicMission(self.config.economic_objective, source="system")
         self.mission.plan(list(DEFAULT_ECONOMIC_TASKS))
         self.fabric.subscribe("governor.decision", self._record_governor_message)
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
-            self.runtime.register_autonomy()
+            self.runtime.register_autonomy(message_fabric=self.fabric)
         self.cycle_handler = cycle_handler
         if cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: cycle_handler(str(payload.get("objective", ""))))
@@ -99,7 +101,7 @@ class AurelixSystem:
 
     def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
                requires_capital: bool = False, production_change: bool = False) -> str:
-        """Submit work only after the canonical Governor routing decision."""
+        """Submit work through Governor then Orchestrator, never directly to Runtime."""
         route = self.governor.route(
             source="system",
             action=kind,
@@ -121,7 +123,13 @@ class AurelixSystem:
                  "request_id": route.request_id, "reasons": list(route.reasons)},
             )
             raise PermissionError(route.reasons)
-        return self.runtime.submit(kind, payload or {})
+        return self.orchestrator.submit(
+            capability=kind,
+            payload=payload or {},
+            risk=0,
+            requires_capital=False,
+            production_change=False,
+        )
 
     def _enqueue_due(self) -> int:
         now = time.monotonic()
@@ -184,6 +192,7 @@ class AurelixSystem:
             "store": "shared",
             "scheduler": "shared-runtime",
             "governor": "canonical-submission-boundary",
+            "orchestrator": "canonical-capability-selector",
             "fabric": "structured-topic-router",
             "mission": {"id": self.mission.mission_id, "state": self.mission.state.value, "objective": self.mission.objective},
             "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled",
