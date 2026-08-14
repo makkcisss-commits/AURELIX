@@ -19,6 +19,9 @@ services:
       AURELIX_RESEARCH_URL: ${AURELIX_RESEARCH_URL:-}
       AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:-}
       AURELIX_DATABASE_URL: ${AURELIX_DATABASE_URL:-}
+      AURELIX_AUTONOMY_ENABLED: ${AURELIX_AUTONOMY_ENABLED:-true}
+      AURELIX_AUTONOMY_INTERVAL_SECONDS: ${AURELIX_AUTONOMY_INTERVAL_SECONDS:-900}
+      AURELIX_AUTONOMY_OBJECTIVE: ${AURELIX_AUTONOMY_OBJECTIVE:-Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.}
     volumes:
       - aurelix_data:/app/data
     restart: unless-stopped
