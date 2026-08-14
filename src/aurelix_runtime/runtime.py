@@ -85,6 +85,9 @@ class AurelixRuntime:
         def handle(record: JobRecord) -> Any:
             return fabric.run_claimed(record)
 
+        # Keep the mounted fabric inspectable so the composition root and
+        # integration tests can prove that autonomy uses the shared bus.
+        handle.autonomy_fabric = fabric  # type: ignore[attr-defined]
         self.register_claimed(kind, handle)
 
     def register_pipeline(self, pipeline: GovernedPipeline | None = None, kind: str = "pipeline.run") -> None:
