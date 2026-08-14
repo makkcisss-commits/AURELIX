@@ -122,7 +122,13 @@ class EngineFactory:
         return self.research_to_knowledge.research_and_store(query)
 
     def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
-        return self.enterprise.run(objective, approved=approved)
+        """Run one enterprise cycle using the latest verified economic feedback."""
+        economic_feedback = self.economic_learning_context()
+        return self.enterprise.run(
+            objective,
+            approved=approved,
+            economic_feedback=economic_feedback,
+        )
 
     def run_system_cycle(self, objective: str):
         return self.system_orchestrator.run_cycle(objective)
