@@ -65,6 +65,9 @@ class SystemValidation:
             "evaluation": fabric.evaluation is self.factory.evaluation,
             "opportunity": fabric.opportunity is self.factory.opportunity,
             "business": fabric.business is self.factory.business,
+            "capability_escalator": fabric.capability_escalator is self.factory.capability_escalator,
+            "adaptive_loop": fabric.adaptive_loop is self.factory.adaptive_loop,
+            "experiment_runner": fabric.experiment_runner is self.factory.experiment_runner,
         }
         return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
 
@@ -86,8 +89,6 @@ class SystemValidation:
         runner = getattr(self.factory, "experiment_runner", None)
         executor = getattr(self.factory, "experiment_executor", None)
         registered = "experiment.run" in runtime.handlers or "experiment.run" in runtime.claimed_handlers
-        # Production must fail closed when no real measurement source is supplied.
-        # This is a degraded capability, never a synthetic success.
         if executor is None:
             return {"status": "degraded", "reason": "no_real_experiment_executor", "runner_present": runner is not None, "job_registered": registered}
         return {"status": "ok" if runner is not None and registered else "failed", "runner_present": runner is not None, "job_registered": registered, "executor_configured": True}
