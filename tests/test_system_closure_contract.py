@@ -1,32 +1,37 @@
-from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
-from aurelix_runtime.runtime import RuntimeConfig
+from __future__ import annotations
 
 
-def test_system_closure_contract_is_one_machine(tmp_path):
+def test_development_mode_never_claims_real_opportunity_evidence(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURELIX_MODE", "development")
+
+    from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
+    from aurelix_runtime.runtime import RuntimeConfig
+
     factory = EngineFactory(
-        EngineFactoryConfig(
-            runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")),
-            register_autonomy=True,
-        )
+        EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")))
     )
     try:
-        assert factory.autonomy_fabric is not None
-        assert factory.autonomy_fabric.engines is factory.enterprise.store
-        assert factory.autonomy_fabric.message_fabric is factory.message_fabric
-        assert factory.autonomy_fabric.research is factory.research
-        assert factory.autonomy_fabric.academy is factory.academy
-        assert factory.autonomy_fabric.opportunity is factory.opportunity
-        assert factory.autonomy_fabric.business is factory.business
-
-        validation = factory.validate_system()
-        assert validation["status"] == "ok"
-        assert validation["summary"]["failed"] == 0
-
-        economic = factory.economic_learning_context()
-        assert economic["verified_financial_outcome"] is False
-        assert economic["daily_realized_eur"] == 0
-
         diagnostic = factory.diagnose()
-        assert diagnostic["status"] in {"ok", "degraded"}
+        check = next(item for item in diagnostic["checks"] if item["name"] == "live_opportunity_readiness")
+        assert check["status"] == "degraded"
+        assert check["evidence"]["real_evidence"] is False
+    finally:
+        factory.runtime.close()
+
+
+def test_canonical_composition_has_shared_engine_store(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURELIX_MODE", "development")
+
+    from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
+    from aurelix_runtime.runtime import RuntimeConfig
+
+    factory = EngineFactory(
+        EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")))
+    )
+    try:
+        diagnostic = factory.diagnose()
+        check = next(item for item in diagnostic["checks"] if item["name"] == "canonical_composition")
+        assert check["status"] == "ok"
+        assert all(check["evidence"].values())
     finally:
         factory.runtime.close()

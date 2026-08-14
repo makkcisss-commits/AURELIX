@@ -20,19 +20,23 @@ class DiagnosticCheck:
 
 
 class SystemDiagnostics:
-    """Runs bounded, observable checks across the system composition root."""
+    """Runs bounded checks across the real composition, not just object presence."""
 
     def __init__(self, factory) -> None:
         self.factory = factory
 
     def run(self) -> dict[str, Any]:
-        checks: list[DiagnosticCheck] = []
-        checks.append(self._check("runtime", self._runtime))
-        checks.append(self._check("model_provider", lambda: self._provider("model_provider")))
-        checks.append(self._check("research_provider", lambda: self._provider("research_provider")))
-        checks.append(self._check("knowledge_store", self._knowledge))
-        checks.append(self._check("enterprise_loop", self._enterprise_loop))
-        checks.append(self._check("developer_control", self._developer_control))
+        checks: list[DiagnosticCheck] = [
+            self._check("runtime", self._runtime),
+            self._check("canonical_composition", self._canonical_composition),
+            self._check("economic_feedback", self._economic_feedback),
+            self._check("live_opportunity_readiness", self._live_opportunity_readiness),
+            self._check("model_provider", lambda: self._provider("model_provider")),
+            self._check("research_provider", lambda: self._provider("research_provider")),
+            self._check("knowledge_store", self._knowledge),
+            self._check("enterprise_loop", self._enterprise_loop),
+            self._check("developer_control", self._developer_control),
+        ]
         failed = [c for c in checks if c.status == "failed"]
         degraded = [c for c in checks if c.status == "degraded"]
         overall = "failed" if failed else "degraded" if degraded else "ok"
@@ -53,6 +57,65 @@ class SystemDiagnostics:
     def _runtime(self) -> DiagnosticCheck:
         status = self.factory.runtime.store.status()
         return DiagnosticCheck("runtime", "ok", "info", "durable runtime is reachable", {"status": status})
+
+    def _canonical_composition(self) -> DiagnosticCheck:
+        fabric = getattr(self.factory, "autonomy_fabric", None)
+        enterprise = getattr(self.factory, "enterprise", None)
+        if self.factory.config.register_autonomy and (fabric is None or enterprise is None):
+            return DiagnosticCheck("canonical_composition", "failed", "high", "autonomy is enabled without a canonical shared fabric", {})
+        if fabric is None:
+            return DiagnosticCheck("canonical_composition", "degraded", "medium", "autonomy fabric is disabled", {"enabled": False})
+        shared_engines = {
+            "research": fabric.research is self.factory.research,
+            "academy": fabric.academy is self.factory.academy,
+            "knowledge": fabric.knowledge is self.factory.knowledge_engine,
+            "innovation": fabric.innovation is self.factory.innovation,
+            "experiment": fabric.experiment is self.factory.experiment,
+            "evaluation": fabric.evaluation is self.factory.evaluation,
+            "opportunity": fabric.opportunity is self.factory.opportunity,
+            "business": fabric.business is self.factory.business,
+            "engine_store": fabric.engines is enterprise.store,
+            "message_fabric": fabric.message_fabric is self.factory.message_fabric,
+        }
+        if not all(shared_engines.values()):
+            return DiagnosticCheck("canonical_composition", "failed", "high", "multiple composition instances detected", shared_engines)
+        return DiagnosticCheck("canonical_composition", "ok", "info", "runtime autonomy and enterprise loop share one composition", shared_engines)
+
+    def _economic_feedback(self) -> DiagnosticCheck:
+        context = self.factory.economic_learning_context()
+        required = {"productive_sources", "average_realization_ratio", "daily_realized_eur", "daily_expected_eur", "verified_financial_outcome"}
+        missing = sorted(required - set(context))
+        if missing:
+            return DiagnosticCheck("economic_feedback", "failed", "high", "economic feedback is missing ranking fields", {"missing": missing})
+        if context["daily_realized_eur"] == 0 and context["verified_financial_outcome"]:
+            return DiagnosticCheck("economic_feedback", "failed", "high", "financial evidence is marked verified without realized revenue", context)
+        return DiagnosticCheck("economic_feedback", "ok", "info", "economic feedback is explicit and realization-aware", {
+            "productive_sources": context["productive_sources"],
+            "average_realization_ratio": str(context["average_realization_ratio"]),
+            "verified_financial_outcome": context["verified_financial_outcome"],
+        })
+
+    def _live_opportunity_readiness(self) -> DiagnosticCheck:
+        """Never confuse deterministic development evidence with real market evidence."""
+        mode = __import__("os").environ.get("AURELIX_MODE", "production").strip().lower()
+        provider = getattr(self.factory, "research_provider", None)
+        if mode == "development":
+            return DiagnosticCheck(
+                "live_opportunity_readiness", "degraded", "medium",
+                "development mode uses synthetic evidence; live opportunity discovery is not enabled",
+                {"mode": mode, "provider": type(provider).__name__ if provider else None, "real_evidence": False},
+            )
+        if provider is None:
+            return DiagnosticCheck(
+                "live_opportunity_readiness", "failed", "high",
+                "no live research provider is configured; real opportunity discovery cannot run",
+                {"mode": mode, "real_evidence": False},
+            )
+        return DiagnosticCheck(
+            "live_opportunity_readiness", "ok", "info",
+            "live research provider is configured; evidence still requires qualification before economic execution",
+            {"mode": mode, "provider": type(provider).__name__, "real_evidence": True},
+        )
 
     def _provider(self, attr: str) -> DiagnosticCheck:
         provider = getattr(self.factory, attr)

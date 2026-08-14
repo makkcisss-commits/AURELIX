@@ -29,7 +29,9 @@ jobs:
           python -m pip install -r requirements.txt pytest
           python -m pip install -e .
       - name: Validate Python syntax
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests scripts
+      - name: Validate repository integrity
+        run: python scripts/repository_integrity.py .
       - name: Run tests
         run: pytest -q
       - name: Run packaged end-to-end smoke
@@ -67,7 +69,7 @@ jobs:
           python -m pip install -r requirements.txt pytest
           python -m pip install -e .
       - name: Validate Python syntax
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests scripts
       - name: Run PostgreSQL integration test
         run: pytest -q tests/test_postgres_knowledge_repository.py
 

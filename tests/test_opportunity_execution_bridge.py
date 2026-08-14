@@ -3,6 +3,8 @@ from decimal import Decimal
 
 import pytest
 
+from aurelix_core.economic_opportunity_validation import qualify_opportunity
+from aurelix_core.evidence import EvidenceRelation, make_evidence
 from aurelix_core.governor import GovernorRoute
 from aurelix_core.opportunities import OpportunityStage, build_opportunity
 from aurelix_core.opportunity_execution_bridge import OpportunityExecutionBridge
@@ -21,6 +23,23 @@ def approved_opportunity(*, risk: int = 1):
         confidence=Decimal("0.9"),
     )
     return replace(opportunity, stage=OpportunityStage.APPROVED)
+
+
+def qualification_for(opportunity):
+    return qualify_opportunity(
+        opportunity,
+        evidence_by_claim={
+            claim: [
+                make_evidence(
+                    source_ref=f"https://example.test/{claim}",
+                    claim=claim,
+                    relation=EvidenceRelation.SUPPORTS,
+                    quality=Decimal("0.9"),
+                )
+            ]
+            for claim in ("demand", "monetization_path", "source_reality")
+        },
+    )
 
 
 def permission_for(opportunity_id: str) -> ResourcePermission:
@@ -42,6 +61,7 @@ def test_approved_opportunity_runs_through_governor_runtime_and_revenue():
         owner_role="owner",
         channel="digital_service",
         permission=permission_for(opportunity.opportunity_id),
+        qualification=qualification_for(opportunity),
         operation=lambda: {"status": "completed", "revenue_eur": "25.00"},
     )
 
@@ -69,6 +89,7 @@ def test_governor_blocks_high_risk_before_runtime():
         owner_role="owner",
         channel="service",
         permission=permission_for(opportunity.opportunity_id),
+        qualification=qualification_for(opportunity),
         operation=forbidden_operation,
     )
 
@@ -96,6 +117,7 @@ def test_resource_scope_still_applies_after_governor_allows():
             owner_role="owner",
             channel="service",
             permission=wrong_scope,
+            qualification=qualification_for(opportunity),
             operation=lambda: {"revenue_eur": "50"},
         )
 

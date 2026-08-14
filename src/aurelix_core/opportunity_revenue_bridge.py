@@ -1,8 +1,7 @@
-"""Bridge validated opportunities into measurable revenue-source candidates.
+"""Bridge qualified opportunities into measurable revenue-source candidates.
 
-This module deliberately separates economic hypotheses from realized revenue:
-an opportunity may create a candidate source, but only observed revenue can
-move that source into a productive state.
+An opportunity must first pass the evidence gate. This bridge still does not
+authorize execution and never treats an estimate as realized revenue.
 """
 from __future__ import annotations
 
@@ -11,6 +10,7 @@ from decimal import Decimal
 from enum import Enum
 from uuid import uuid4
 
+from .economic_opportunity_validation import EconomicQualification
 from .opportunities import Opportunity, OpportunityStage
 from .revenue import RevenueEngine
 
@@ -42,15 +42,24 @@ class RevenueSource:
 
 
 class OpportunityRevenueBridge:
-    """Turns approved opportunities into accountable revenue-source candidates."""
+    """Turns evidence-qualified opportunities into accountable revenue sources."""
 
     def __init__(self, revenue: RevenueEngine | None = None) -> None:
         self.revenue = revenue or RevenueEngine()
         self.sources: dict[str, RevenueSource] = {}
 
-    def admit(self, opportunity: Opportunity, *, owner_role: str, channel: str) -> RevenueSource:
+    def admit(
+        self,
+        opportunity: Opportunity,
+        *,
+        qualification: EconomicQualification,
+        owner_role: str,
+        channel: str,
+    ) -> RevenueSource:
         if opportunity.stage not in {OpportunityStage.APPROVED, OpportunityStage.RECOMMENDED}:
             raise ValueError("opportunity must be recommended or approved before revenue admission")
+        if not qualification.is_qualified or qualification.opportunity_id != opportunity.opportunity_id:
+            raise ValueError("opportunity must have matching evidence qualification before revenue admission")
         if not owner_role.strip() or not channel.strip():
             raise ValueError("owner_role and channel are required")
         source = RevenueSource(
@@ -59,7 +68,7 @@ class OpportunityRevenueBridge:
             owner_role=owner_role,
             channel=channel,
             expected_daily_eur=max(Decimal("0"), opportunity.estimated_monthly_revenue_eur / Decimal("30")),
-            confidence=opportunity.confidence,
+            confidence=min(opportunity.confidence, qualification.confidence),
             risk=opportunity.risk,
             stage=SourceStage.VALIDATING,
         )

@@ -1,39 +1,49 @@
-# System Integration Audit V1
+# System Integration Audit V1 — clôture globale
 
-## Scope
+## Résultat
 
-Audit AURELIX as one machine: orchestration, runtime, scheduler, Governor, autonomy, learning, provenance, recovery, and service lifecycle.
+L'audit porte sur AURELIX comme une seule machine : composition, orchestration, runtime, scheduler, Gouverneur, autonomie, intelligence, économie, apprentissage, provenance, récupération et contrôle d'accès.
 
-## Findings
+## Constats corrigés dans la branche de travail
 
-### Critical: execution submission has a lower-level bypass
+### Autorisation d'exécution
 
-`AurelixSystem.submit()` delegates directly to `AurelixRuntime.submit()`. `AurelixRuntime.submit()` only checks that a handler is registered and enqueues the job; it does not require a Governor authorization decision. The higher-level `Orchestrator.submit()` does route through Governor, but the unified system exposes a separate submission path.
+`AurelixSystem.submit()` passe maintenant par le Gouverneur avant d'appeler le Runtime. Les soumissions à risque élevé sont bloquées avant leur mise en file. Le Runtime reste le moteur d'exécution durable et ne constitue pas une autorité concurrente.
 
-This means the architecture currently has two authorization paths:
+### Composition unique
 
-1. Orchestrator → Governor → Runtime
-2. AurelixSystem → Runtime
+`EngineFactory` est la composition canonique. `AutonomyFabric`, `EnterpriseLoop` et `SystemOrchestrator` partagent les mêmes moteurs et le même état durable dans cette composition. `AurelixSystem` agit comme façade longue durée.
 
-The second path can bypass the policy boundary for registered capabilities. This conflicts with the intended invariant that Governor is the single execution authorization boundary.
+### Boucle économique
 
-Evidence: `src/aurelix_runtime/orchestrator.py`, `src/aurelix_runtime/system.py`, `src/aurelix_runtime/runtime.py`.
+La boucle distingue : opportunité détectée, opportunité qualifiée et revenu réalisé. La qualification exige des preuves pour la demande, le chemin de monétisation et la réalité de la source. Un revenu réalisé n'est reconnu qu'après observation authentique.
 
-### High: legacy long-running service remains separate
+Le résultat économique vérifié alimente ensuite le contexte du cycle suivant. En l'absence d'observation positive, le système ne déclare pas de revenu vérifié.
 
-`src/aurelix_runtime/service.py` defines a second `RuntimeService` lifecycle around `PersistentJobQueue` and `SupervisedWorker`, while `AurelixSystem`/`AurelixRuntime` define the canonical durable system lifecycle. The repository currently retains both abstractions and tests for the legacy service.
+### Diagnostic et intégrité
 
-This increases the risk of two competing execution fabrics and makes it harder to prove that production always uses the canonical path.
+Le diagnostic système vérifie la composition, le runtime, le stockage, l'EnterpriseLoop et le contrôle développeur. Un contrôle d'intégrité de dépôt détecte les doublons exacts de fichiers et est maintenant une étape de CI.
 
-### High: autonomous cycle needs end-to-end proof
+### Ancienne RuntimeService
 
-The repository has strong component and composition tests, but the next validation must prove a complete unattended cycle from scheduled work through orchestration, governed execution boundary, durable result, verified economic learning, provenance, and subsequent scheduling, including restart/recovery.
+`src/aurelix_runtime/service.py` reste une compatibilité historique testée. Elle ne constitue pas la composition canonique utilisée par `EngineFactory`. Sa présence est explicitement documentée comme héritée afin d'éviter de la confondre avec le runtime principal.
 
-## Required remediation
+## Contrat de fermeture
 
-- Make the Governor authorization boundary unavoidable for externally submitted executable work.
-- Define an explicit internal-only mechanism for trusted runtime/system plumbing so internal scheduling cannot become a policy bypass.
-- Consolidate or explicitly quarantine the legacy `RuntimeService` path.
-- Add a system-level adversarial test proving that direct runtime submission cannot bypass policy.
-- Add a full unattended multi-cycle integration test including restart and recovery.
-- Preserve audit/provenance across every transition.
+La fermeture V1 est atteinte lorsque :
+
+- la composition est unique ;
+- les chemins d'exécution passent par le Gouverneur ;
+- les travaux sont durables, bornés et récupérables ;
+- les messages et transitions sont audités ;
+- les preuves et la provenance sont conservées ;
+- les opportunités économiques sont qualifiées avant admission au revenu ;
+- estimation et revenu réel restent séparés ;
+- le feedback économique revient au cycle suivant ;
+- les doublons exacts sont refusés par CI ;
+- les tests Python, PostgreSQL, conteneur, contrôle d'accès, production et Web passent ;
+- les intégrations réelles restent explicitement distinguées des simulations.
+
+## Limites restantes hors code
+
+La protection de la branche `main`, la visibilité privée du dépôt, les secrets réels, les fournisseurs de recherche/modèle, les paiements, les contrats commerciaux, l'identité de production, l'observabilité externe et les données financières réelles doivent être configurés dans l'environnement de déploiement. Ils ne doivent pas être simulés dans le code pour déclarer le système rentable.

@@ -44,11 +44,13 @@ class EnterpriseLoop:
         self.opportunity = opportunity
         self.business = business
 
-    def run(self, objective: str, *, approved: bool = False) -> EnterpriseCycle:
+    def run(self, objective: str, *, approved: bool = False,
+            economic_feedback: dict[str, Any] | None = None) -> EnterpriseCycle:
         objective = objective.strip()
         if not objective:
             raise ValueError("enterprise objective is required")
-        self.store.record("enterprise.cycle.started", objective=objective)
+        self.store.record("enterprise.cycle.started", objective=objective,
+                          economic_feedback=economic_feedback or {})
 
         research = self.research.run(objective, self.store)
         academy = self.academy.run(research, self.store)
@@ -56,10 +58,10 @@ class EnterpriseLoop:
         innovation = self.innovation.run(knowledge, self.store)
         experiment = self.experiment.run(innovation, self.store)
         evaluation = self.evaluation.run(experiment, self.store)
-        opportunity = self.opportunity.run(evaluation, self.store)
+        opportunity = self.opportunity.run(evaluation, self.store,
+                                           economic_feedback=economic_feedback or {})
         business = self.business.run(opportunity, approved=approved)
 
         status = business.get("status") or opportunity.get("status")
         self.store.record("enterprise.cycle.completed", objective=objective, status=status)
-        return EnterpriseCycle(objective, research, academy, knowledge, innovation,
-                               experiment, evaluation, opportunity, business)
+        return EnterpriseCycle(objective, research, academy, knowledge, innovation, experiment, evaluation, opportunity, business)

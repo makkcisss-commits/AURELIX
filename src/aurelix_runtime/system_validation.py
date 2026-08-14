@@ -27,6 +27,8 @@ class SystemValidation:
             "health_registry": self._health,
             "runtime": self._runtime,
             "engine_factory": self._factory,
+            "canonical_composition": self._composition,
+            "economic_feedback": self._economic_feedback,
             "knowledge_store": self._knowledge,
         }
 
@@ -43,9 +45,42 @@ class SystemValidation:
         missing = [name for name in required if not hasattr(self.factory, name)]
         return {"status": "ok" if not missing else "failed", "missing": missing}
 
+    def _composition(self) -> dict[str, Any]:
+        fabric = getattr(self.factory, "autonomy_fabric", None)
+        enterprise = getattr(self.factory, "enterprise", None)
+        if not self.factory.config.register_autonomy:
+            return {"status": "degraded", "reason": "autonomy_disabled"}
+        if fabric is None or enterprise is None:
+            return {"status": "failed", "reason": "canonical_fabric_missing"}
+        shared = {
+            "engine_store": fabric.engines is enterprise.store,
+            "message_fabric": fabric.message_fabric is self.factory.message_fabric,
+            "research": fabric.research is self.factory.research,
+            "academy": fabric.academy is self.factory.academy,
+            "knowledge": fabric.knowledge is self.factory.knowledge_engine,
+            "innovation": fabric.innovation is self.factory.innovation,
+            "experiment": fabric.experiment is self.factory.experiment,
+            "evaluation": fabric.evaluation is self.factory.evaluation,
+            "opportunity": fabric.opportunity is self.factory.opportunity,
+            "business": fabric.business is self.factory.business,
+        }
+        return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
+
+    def _economic_feedback(self) -> dict[str, Any]:
+        context = self.factory.economic_learning_context()
+        required = {"productive_sources", "average_realization_ratio", "daily_realized_eur", "daily_expected_eur", "verified_financial_outcome"}
+        missing = sorted(required - set(context))
+        if missing:
+            return {"status": "failed", "missing": missing}
+        if context["daily_realized_eur"] == 0 and context["verified_financial_outcome"]:
+            return {"status": "failed", "reason": "verified_without_realized_revenue"}
+        return {"status": "ok", "productive_sources": context["productive_sources"], "average_realization_ratio": str(context["average_realization_ratio"])}
+
     def _knowledge(self) -> dict[str, Any]:
-        store = getattr(self.factory.runtime, "knowledge_store", None)
-        return {"status": "ok" if store is not None else "degraded", "configured": store is not None}
+        repository = getattr(self.factory, "knowledge", None)
+        if repository is None:
+            return {"status": "failed", "configured": False}
+        return {"status": "ok", "configured": True, "count": repository.count()}
 
     def run(self) -> dict[str, Any]:
         results: list[ValidationResult] = []
