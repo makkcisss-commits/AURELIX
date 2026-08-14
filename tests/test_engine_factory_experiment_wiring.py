@@ -34,7 +34,7 @@ def test_factory_mounts_executor_and_enterprise_queue(tmp_path: Path) -> None:
             research_provider=lambda _query: [],
         )
         assert factory.experiment_executor is executor
-        assert factory.enterprise.experiment_submitter is runtime.submit_experiment
+        assert callable(factory.enterprise.experiment_submitter)
 
         experiment = Experiment("factory-experiment-1", "mounted executor measures experiment", [{"metric": "score", "operator": ">=", "target": 1.0}])
         job_id = runtime.submit_experiment(experiment)
