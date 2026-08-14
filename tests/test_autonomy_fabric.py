@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
+from aurelix_runtime.experiment_runner import ExperimentRunner
 from aurelix_runtime.integrated_engines import EngineStore, Evidence, ResearchEngine
 from aurelix_runtime.knowledge_store import KnowledgeQuery, SQLiteKnowledgeRepository
 from aurelix_runtime.persistence import RuntimeStore
@@ -12,8 +13,14 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     def provider(_: str):
         return [Evidence(source="trusted", claim="validated fact", confidence=0.9, verified=True)]
 
+    def measure(_experiment):
+        # This test supplies the experiment's explicit measurement boundary.
+        # The production runtime never invents this observation when no executor exists.
+        return [{"success": 0.0}]
+
     store = RuntimeStore(db)
-    fabric = AutonomyFabric(store=store, research=ResearchEngine(provider=provider))
+    runner = ExperimentRunner(collector=measure)
+    fabric = AutonomyFabric(store=store, research=ResearchEngine(provider=provider), experiment_runner=runner)
     run = fabric.run("find a validated opportunity")
     durable = store.get_result(run.execution_id)
 
