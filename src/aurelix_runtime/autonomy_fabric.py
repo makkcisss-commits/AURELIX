@@ -99,18 +99,9 @@ class AutonomyFabric:
                 return
 
     def _save_mission_context(self, execution_id: str, mission: EconomicMission, objective: str, required_capabilities: list[str]) -> None:
-        payload = {
-            "execution_id": execution_id,
-            "mission_id": mission.mission_id,
-            "objective": objective,
-            "required_capabilities": required_capabilities,
-            "state": mission.state.value,
-        }
+        payload = {"execution_id": execution_id, "mission_id": mission.mission_id, "objective": objective, "required_capabilities": required_capabilities, "state": mission.state.value}
         with self.store.lock, self.store.db:
-            self.store.db.execute(
-                "INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (f"mission:{execution_id}", json.dumps(payload, sort_keys=True)),
-            )
+            self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (f"mission:{execution_id}", json.dumps(payload, sort_keys=True)))
 
     def _load_mission_context(self, execution_id: str) -> dict[str, Any] | None:
         with self.store.lock:
@@ -158,9 +149,9 @@ class AutonomyFabric:
         if self.adaptive_loop is not None:
             self.adaptive_loop.register_mission(execution_id, objective, required_capabilities)
         if required_capabilities:
-            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
+            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES and not (self.adaptive_loop and self.adaptive_loop.capability_validated(cap))]
             if unknown:
-                return self._capability_learning_result(claimed, mission, required_capabilities)
+                return self._capability_learning_result(claimed, mission, unknown)
 
         self._emit("mission.started", "orchestrator", execution_id, {"mission_id": mission.mission_id, "objective": objective})
         stop = threading.Event()
@@ -236,12 +227,7 @@ class AutonomyFabric:
         self.adaptive_loop.resume_ready(blocked_execution_id)
         resume_execution_id = f"{blocked_execution_id}:resume:{uuid4()}"
         self.store.record_audit(blocked_execution_id, "autonomy.mission_resuming", {"mission_id": context["mission_id"], "resume_execution_id": resume_execution_id})
-        return self.run(
-            context["objective"],
-            execution_id=resume_execution_id,
-            required_capabilities=context["required_capabilities"],
-            mission_id=context["mission_id"],
-        )
+        return self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
 
     def close(self) -> None:
         self.store.close()
