@@ -17,7 +17,7 @@ class Capability:
 
 
 class Orchestrator:
-    """Coordinates work through the canonical durable runtime when available."""
+    """Selects capabilities and submits work through the canonical durable runtime."""
 
     def __init__(self, queue: PersistentJobQueue | None = None, governor: Governor | None = None,
                  runtime: AurelixRuntime | None = None) -> None:
@@ -37,7 +37,11 @@ class Orchestrator:
 
     def submit(self, *, capability: str, payload: dict, risk: int = 0,
                requires_capital: bool = False, production_change: bool = False) -> str:
-        if capability not in self._capabilities:
+        """Route a capability through Governor, then place it in the durable runtime."""
+        runtime_has_capability = self.runtime is not None and (
+            capability in self.runtime.handlers or capability in self.runtime.claimed_handlers
+        )
+        if capability not in self._capabilities and not runtime_has_capability:
             raise KeyError(f"unknown capability: {capability}")
         route = self.governor.route(
             source="orchestrator", action=capability,
