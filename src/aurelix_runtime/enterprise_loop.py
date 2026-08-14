@@ -7,7 +7,7 @@ one durable state boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .integrated_engines import EngineStore
 
@@ -33,7 +33,8 @@ class EnterpriseLoop:
     """The orchestration boundary: no specialist is an isolated island."""
 
     def __init__(self, *, runtime_store, knowledge_repository, research, academy,
-                 knowledge_engine, innovation, experiment, evaluation, opportunity, business):
+                 knowledge_engine, innovation, experiment, evaluation, opportunity, business,
+                 experiment_submitter: Callable[[Any], str] | None = None):
         self.store = EngineStore(runtime_store, knowledge_repository)
         self.research = research
         self.academy = academy
@@ -43,6 +44,10 @@ class EnterpriseLoop:
         self.evaluation = evaluation
         self.opportunity = opportunity
         self.business = business
+        self.experiment_submitter = experiment_submitter
+
+    def set_experiment_submitter(self, submitter: Callable[[Any], str] | None) -> None:
+        self.experiment_submitter = submitter
 
     def run(self, objective: str, *, approved: bool = False,
             economic_feedback: dict[str, Any] | None = None) -> EnterpriseCycle:
@@ -57,11 +62,26 @@ class EnterpriseLoop:
         knowledge = self.knowledge_engine.run(academy, self.store)
         innovation = self.innovation.run(knowledge, self.store)
         experiment = self.experiment.run(innovation, self.store)
-        evaluation = self.evaluation.run(experiment, self.store)
+
+        # Proposal and execution are deliberately separate durable phases.
+        # Evaluation of an unexecuted experiment must never become a business signal.
+        if experiment.get("experiment_id") and self.experiment_submitter is not None:
+            from .integrated_engines import Experiment
+            experiment_record = self.store.experiments.get(experiment["experiment_id"])
+            if experiment_record is None:
+                raise RuntimeError("experiment proposal was not persisted in the canonical engine store")
+            job_id = self.experiment_submitter(experiment_record)
+            experiment["execution_job_id"] = job_id
+            experiment["status"] = "queued"
+            evaluation = {"experiment_id": experiment["experiment_id"], "passed": False, "reason": "awaiting_execution", "execution_job_id": job_id}
+            self.store.record("experiment.queued", experiment_id=experiment["experiment_id"], job_id=job_id)
+        else:
+            evaluation = self.evaluation.run(experiment, self.store)
+
         opportunity = self.opportunity.run(evaluation, self.store,
                                            economic_feedback=economic_feedback or {})
         business = self.business.run(opportunity, approved=approved)
 
-        status = business.get("status") or opportunity.get("status")
+        status = business.get("status") or opportunity.get("status") or evaluation.get("reason")
         self.store.record("enterprise.cycle.completed", objective=objective, status=status)
         return EnterpriseCycle(objective, research, academy, knowledge, innovation, experiment, evaluation, opportunity, business)
