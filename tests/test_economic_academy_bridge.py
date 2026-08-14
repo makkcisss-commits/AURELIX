@@ -12,11 +12,15 @@ class Source:
         self.realized_daily_eur = Decimal(observed)
         self.expected_daily_eur = Decimal(expected)
         self.is_productive = productive
+        self.status = type("Status", (), {"value": "active" if productive else "paused"})()
 
 
 class Portfolio:
     def __init__(self, *sources):
         self.sources = list(sources)
+
+    def all(self):
+        return list(self.sources)
 
 
 def test_verified_economic_outcomes_publish_as_traceable_academy_knowledge():
