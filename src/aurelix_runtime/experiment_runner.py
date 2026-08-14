@@ -34,6 +34,11 @@ class ExperimentRunner:
         run.status = "running"
         observations = self.collector(experiment)
         run.observations = list(observations)
+        if not run.observations:
+            run.status = "awaiting_measurement"
+            experiment.status = "awaiting_measurement"
+            experiment.result = None
+            return run
         run.status = "measuring"
         run.metrics = self.compute_metrics(run.observations)
         run.status = "evaluation"
