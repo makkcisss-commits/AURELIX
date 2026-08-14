@@ -15,14 +15,12 @@ from .pipeline_runner import GovernedPipeline
 
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
 
-
 @dataclass(frozen=True)
 class RuntimeConfig:
     database_path: str = "data/aurelix.db"
     heartbeat_seconds: float = 30.0
     worker_poll_seconds: float = 1.0
     max_attempts: int = 3
-
 
 @dataclass(frozen=True)
 class Job:
@@ -34,28 +32,19 @@ class Job:
     worker_id: str | None = None
     lease_token: str | None = None
 
-
 def _jsonable(value: Any) -> Any:
-    if is_dataclass(value):
-        return _jsonable(asdict(value))
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
+    if is_dataclass(value): return _jsonable(asdict(value))
+    if isinstance(value, dict): return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)): return [_jsonable(v) for v in value]
     return value
-
 
 class AurelixRuntime:
     """24/7 orchestration loop with one durable, fenced execution fabric."""
-
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         self.config = config or RuntimeConfig()
-        if self.config.heartbeat_seconds <= 0:
-            raise ValueError("heartbeat_seconds must be positive")
-        if self.config.worker_poll_seconds <= 0:
-            raise ValueError("worker_poll_seconds must be positive")
-        if self.config.max_attempts <= 0:
-            raise ValueError("max_attempts must be positive")
+        if self.config.heartbeat_seconds <= 0: raise ValueError("heartbeat_seconds must be positive")
+        if self.config.worker_poll_seconds <= 0: raise ValueError("worker_poll_seconds must be positive")
+        if self.config.max_attempts <= 0: raise ValueError("max_attempts must be positive")
         self.store = RuntimeStore(self.config.database_path, lease_seconds=self.config.heartbeat_seconds)
         self.handlers: dict[str, Callable[[dict[str, str]], Any]] = {}
         self.claimed_handlers: dict[str, Callable[[JobRecord], Any]] = {}
@@ -65,31 +54,23 @@ class AurelixRuntime:
         self.store.recover_running_jobs(self.config.max_attempts, stale_after_seconds=stale_after)
 
     def register(self, kind: str, handler: Callable[[dict[str, str]], Any]) -> None:
-        if not kind.strip():
-            raise ValueError("job kind is required")
-        self.handlers[kind] = handler
-        self.claimed_handlers.pop(kind, None)
+        if not kind.strip(): raise ValueError("job kind is required")
+        self.handlers[kind] = handler; self.claimed_handlers.pop(kind, None)
 
     def register_claimed(self, kind: str, handler: Callable[[JobRecord], Any]) -> None:
-        if not kind.strip():
-            raise ValueError("job kind is required")
-        self.claimed_handlers[kind] = handler
-        self.handlers.pop(kind, None)
+        if not kind.strip(): raise ValueError("job kind is required")
+        self.claimed_handlers[kind] = handler; self.handlers.pop(kind, None)
 
     def register_autonomy(self, kind: str = "autonomy.run") -> None:
         from .autonomy_fabric import AutonomyFabric
-        fabric = AutonomyFabric(store=self.store)
-        self.register_claimed(kind, fabric.run_claimed)
+        fabric = AutonomyFabric(store=self.store); self.register_claimed(kind, fabric.run_claimed)
 
     def register_pipeline(self, pipeline: GovernedPipeline | None = None, kind: str = "pipeline.run") -> None:
         governed = pipeline or GovernedPipeline()
-
         def handle(payload: dict[str, str]) -> None:
             objective = payload.get("objective", "").strip()
-            if not objective:
-                raise ValueError("pipeline objective is required")
+            if not objective: raise ValueError("pipeline objective is required")
             governed.run(objective, business_approved=False)
-
         self.register(kind, handle)
 
     def register_experiment(self, experiment: Experiment) -> None:
@@ -97,8 +78,7 @@ class AurelixRuntime:
         with self.store.lock, self.store.db:
             self.store.db.execute("""INSERT INTO experiments(experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,?) ON CONFLICT(experiment_id) DO UPDATE SET
-                hypothesis=excluded.hypothesis,
-                success_criteria=excluded.success_criteria,
+                hypothesis=excluded.hypothesis, success_criteria=excluded.success_criteria,
                 status=CASE WHEN experiments.status='complete' THEN experiments.status ELSE excluded.status END,
                 result=CASE WHEN experiments.status='complete' THEN experiments.result ELSE excluded.result END,
                 updated_at=excluded.updated_at""",
@@ -127,70 +107,55 @@ class AurelixRuntime:
 
     def get_experiment(self, experiment_id: str) -> Experiment:
         match = next((item for item in self.query_experiments() if item["experiment_id"] == experiment_id), None)
-        if match is None:
-            raise KeyError(f"experiment not found: {experiment_id}")
+        if match is None: raise KeyError(f"experiment not found: {experiment_id}")
         return Experiment(id=match["experiment_id"], hypothesis=match["hypothesis"], success_criteria=match["success_criteria"], status=match["status"], result=match["result"])
 
     def create_experiment_runner(self, executor: ExperimentExecutor | None = None) -> ExperimentRunner:
         def collector(experiment: Experiment) -> list[dict[str, Any]]:
             self.register_experiment(experiment)
             existing = self.query_experiment_observations(experiment.id)
-            if existing:
-                return existing
-            # No executor means the system is safely waiting for a real measurement source.
-            # It is never converted into a synthetic observation.
-            if executor is None:
-                return []
+            if existing: return existing
+            if executor is None: return []
             observations = executor(experiment)
             if observations:
                 for observation in observations:
-                    if not isinstance(observation, dict):
-                        raise TypeError("experiment executor must return dictionaries")
+                    if not isinstance(observation, dict): raise TypeError("experiment executor must return dictionaries")
                     self.record_observation(experiment.id, observation)
             return self.query_experiment_observations(experiment.id)
-
         def on_complete(experiment: Experiment, run) -> None:
             self.register_experiment(experiment)
             event = "experiment.evaluated" if run.status == "complete" else "experiment.awaiting_measurement"
             outcome = "succeeded" if experiment.result and experiment.result.get("passed") else "awaiting" if run.status != "complete" else "evaluated"
-            self.store.audit(event, "experiment-runner", experiment.id, outcome,
-                             {"status": experiment.status, "run_status": run.status, "result": experiment.result or {}})
-
+            self.store.audit(event, "experiment-runner", experiment.id, outcome, {"status": experiment.status, "run_status": run.status, "result": experiment.result or {}})
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
-    def register_experiment_runner(self, executor: ExperimentExecutor, kind: str = "experiment.run", runner: ExperimentRunner | None = None) -> ExperimentRunner:
-        if executor is None:
-            raise ValueError("experiment executor is required")
+    def register_experiment_runner(self, executor: ExperimentExecutor, kind: str = "experiment.run", runner: ExperimentRunner | None = None,
+                                   after_execute: Callable[[str], Any] | None = None) -> ExperimentRunner:
+        if executor is None: raise ValueError("experiment executor is required")
         runner = runner or self.create_experiment_runner(executor)
-
         def handle(payload: dict[str, str]) -> Any:
             experiment_id = payload.get("experiment_id", "").strip()
-            if not experiment_id:
-                raise ValueError("experiment_id is required")
-            return runner.execute(self.get_experiment(experiment_id))
-
+            if not experiment_id: raise ValueError("experiment_id is required")
+            result = runner.execute(self.get_experiment(experiment_id))
+            if result.status == "complete" and after_execute is not None:
+                return {"experiment": _jsonable(result), "continuation": _jsonable(after_execute(experiment_id))}
+            return result
         self.register(kind, handle)
         return runner
 
     def _find_experiment_job(self, experiment_id: str) -> JobRecord | None:
         with self.store.lock:
-            row = self.store.db.execute(
-                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? ORDER BY created_at DESC LIMIT 1",
-                ("experiment.run", experiment_id),
-            ).fetchone()
+            row = self.store.db.execute("SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? ORDER BY created_at DESC LIMIT 1", ("experiment.run", experiment_id)).fetchone()
         return self.store._record(row) if row is not None else None
 
     def submit_experiment(self, experiment: Experiment, kind: str = "experiment.run") -> str:
-        if kind not in self.handlers and kind not in self.claimed_handlers:
-            raise ValueError(f"unregistered job kind: {kind}")
+        if kind not in self.handlers and kind not in self.claimed_handlers: raise ValueError(f"unregistered job kind: {kind}")
         self.register_experiment(experiment)
         existing = self._find_experiment_job(experiment.id)
         if existing is not None:
             persisted = self.get_experiment(experiment.id)
-            if persisted.status == "complete" and persisted.result is not None:
-                return existing.job_id
-            if existing.status in {"queued", "running"}:
-                return existing.job_id
+            if persisted.status == "complete" and persisted.result is not None: return existing.job_id
+            if existing.status in {"queued", "running"}: return existing.job_id
             if persisted.status == "awaiting_measurement" and existing.status == "completed":
                 record = self.store.enqueue(kind, {"experiment_id": experiment.id})
                 self.store.audit("experiment.requeued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id, "previous_job_id": existing.job_id})
@@ -201,8 +166,7 @@ class AurelixRuntime:
         return record.job_id
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
-        if kind not in self.handlers and kind not in self.claimed_handlers:
-            raise ValueError(f"unregistered job kind: {kind}")
+        if kind not in self.handlers and kind not in self.claimed_handlers: raise ValueError(f"unregistered job kind: {kind}")
         record = self.store.enqueue(kind, payload or {})
         self.store.audit("job.queued", "runtime", record.job_id, "queued", {"kind": kind})
         return record.job_id
@@ -210,25 +174,19 @@ class AurelixRuntime:
     def _heartbeat_loop(self, job: Job, stop_event: threading.Event) -> None:
         interval = max(self.config.heartbeat_seconds / 2.0, 0.1)
         while not stop_event.wait(interval):
-            if not self.store.heartbeat(job.job_id, job.worker_id, job.lease_token):
-                return
+            if not self.store.heartbeat(job.job_id, job.worker_id, job.lease_token): return
 
     def run_once(self) -> bool:
         self.store.heartbeat()
         record = self.store.claim_next(max_attempts=self.config.max_attempts, worker_id=self.worker_id)
-        if not record:
-            return False
+        if not record: return False
         job = Job(record.job_id, record.name, {str(k): str(v) for k, v in record.payload.items()}, record.status, record.attempts, record.worker_id, record.lease_token)
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(target=self._heartbeat_loop, args=(job, heartbeat_stop), name=f"aurelix-heartbeat-{job.job_id[:8]}", daemon=True)
         heartbeat_thread.start()
         try:
-            if job.kind in self.claimed_handlers:
-                output = self.claimed_handlers[job.kind](record)
-            else:
-                output = self.handlers[job.kind](job.payload)
-            result = _jsonable(output) if output is not None else {"ok": True}
-            self.store.complete(job.job_id, result, worker_id=job.worker_id, lease_token=job.lease_token)
+            output = self.claimed_handlers[job.kind](record) if job.kind in self.claimed_handlers else self.handlers[job.kind](job.payload)
+            self.store.complete(job.job_id, _jsonable(output) if output is not None else {"ok": True}, worker_id=job.worker_id, lease_token=job.lease_token)
             self.store.audit("job.completed", "runtime", job.job_id, "succeeded", {"kind": job.kind})
         except LeaseLostError as exc:
             self.store.audit("job.lease_lost", "runtime", job.job_id, "aborted", {"kind": job.kind, "error": str(exc)})
@@ -241,19 +199,13 @@ class AurelixRuntime:
             else:
                 self.store.audit("job.retry" if retry else "job.failed", "runtime", job.job_id, "queued" if retry else "failed", {"kind": job.kind, "error": str(exc), "attempt": job.attempts})
         finally:
-            heartbeat_stop.set()
-            heartbeat_thread.join(timeout=max(self.config.heartbeat_seconds, 1.0))
+            heartbeat_stop.set(); heartbeat_thread.join(timeout=max(self.config.heartbeat_seconds, 1.0))
         return True
 
     def serve_forever(self) -> None:
         while not self._stop.is_set():
-            worked = self.run_once()
-            if not worked:
-                self._stop.wait(self.config.worker_poll_seconds)
+            if not self.run_once(): self._stop.wait(self.config.worker_poll_seconds)
 
-    def stop(self) -> None:
-        self._stop.set()
-
+    def stop(self) -> None: self._stop.set()
     def close(self) -> None:
-        self.stop()
-        self.store.close()
+        self.stop(); self.store.close()
