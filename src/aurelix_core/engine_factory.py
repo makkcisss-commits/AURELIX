@@ -21,6 +21,7 @@ from .revenue_portfolio import RevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
+from aurelix_runtime.experiment_runner import ExperimentRunner
 from aurelix_runtime.integrated_engines import (
     AcademyEngine, BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine,
     InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine,
@@ -117,9 +118,9 @@ class EngineFactory:
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
         self.experiment_executor = configured_executor
-        self.experiment_runner = self.runtime.create_experiment_runner(configured_executor)
+        self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
         if configured_executor is not None:
-            self.runtime.register_experiment_runner(configured_executor)
+            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner)
         self.core_evaluation = CoreEvaluationEngine()
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
