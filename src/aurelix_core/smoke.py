@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 
+from aurelix_core.economic_opportunity_validation import qualify_opportunity
+from aurelix_core.evidence import EvidenceRelation, make_evidence
+from aurelix_core.opportunity_execution_bridge import OpportunityExecutionBridge
+from aurelix_core.opportunities import OpportunityStage, build_opportunity
+from aurelix_core.resource_scope import ResourceKind, ResourcePermission
 from aurelix_runtime.integrated_engines import EngineStore, Evidence
 from aurelix_runtime.knowledge_store import InMemoryKnowledgeRepository, KnowledgeQuery
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
@@ -63,19 +70,66 @@ def main() -> None:
         runtime.register_experiment(experiment)
         runtime.record_observation(experiment.id, {"success": 1.0})
         run = factory.experiment_runner.execute(experiment)
-
         assert run.status == "complete"
         assert run.evaluation is not None
         assert run.evaluation.passed is True
+
+        opportunity = build_opportunity(
+            title="Bounded paid automation",
+            finding_ids=[result.evidence[0].evidence_id],
+            cost_eur=Decimal("20"),
+            monthly_revenue_eur=Decimal("300"),
+            hours=Decimal("4"),
+            complexity=2,
+            risk=1,
+            confidence=Decimal("0.9"),
+        )
+        evidence_by_claim = {
+            claim: [make_evidence(
+                source_ref="https://example.test/source",
+                claim=f"Supported {claim}",
+                relation=EvidenceRelation.SUPPORTS,
+                quality=Decimal("0.95"),
+            )]
+            for claim in ("demand", "monetization_path", "source_reality")
+        }
+        qualification = qualify_opportunity(opportunity, evidence_by_claim=evidence_by_claim)
+        assert qualification.is_qualified
+        approved = replace(opportunity, stage=OpportunityStage.APPROVED)
+
+        actor_id = "smoke-business-agent"
+        permission = ResourcePermission(
+            actor_id=actor_id,
+            resource=ResourceKind.BUSINESS,
+            operations=frozenset({"execute"}),
+            scope=approved.opportunity_id,
+        )
+        bridge = OpportunityExecutionBridge()
+        outcome = bridge.execute(
+            approved,
+            qualification=qualification,
+            actor_id=actor_id,
+            owner_role="business",
+            channel="smoke-channel",
+            permission=permission,
+            operation=lambda: {"revenue_eur": "125.50", "reference": "smoke-payment"},
+        )
+        assert outcome.executed is True
+        assert outcome.observed_revenue_eur == Decimal("125.50")
+        assert outcome.revenue_source_id is not None
+        source = bridge.revenue.sources[outcome.revenue_source_id]
+        assert source.is_productive is True
+        assert source.observed_daily_eur == Decimal("125.50")
 
         print(json.dumps({
             "status": "ok",
             "evidence_count": len(result.evidence),
             "knowledge_count": knowledge.count(),
             "experiment_id": experiment.id,
-            "evaluation": {
-                "passed": run.evaluation.passed,
-                "confidence": run.evaluation.confidence,
-                "reasons": list(run.evaluation.reasons),
+            "economic_path": {
+                "qualified": qualification.is_qualified,
+                "executed": outcome.executed,
+                "observed_revenue_eur": str(outcome.observed_revenue_eur),
+                "productive_source": source.is_productive,
             },
         }, indent=2))
