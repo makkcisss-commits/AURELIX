@@ -29,9 +29,10 @@ class SystemCycleResult:
 class SystemOrchestrator:
     """One coordinator for the complete safe autonomous lifecycle."""
 
-    def __init__(self, factory) -> None:
+    def __init__(self, factory, intelligence: ContinuousIntelligence | None = None, capability_escalator: Any | None = None) -> None:
         self.factory = factory
-        self.intelligence = ContinuousIntelligence()
+        self.intelligence = intelligence or getattr(factory, "intelligence", None) or ContinuousIntelligence()
+        self.capability_escalator = capability_escalator or getattr(factory, "capability_escalator", None)
         self.curated_academy = CuratedAcademy()
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
