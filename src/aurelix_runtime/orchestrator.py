@@ -5,7 +5,7 @@ from typing import Callable, Any
 
 from aurelix_core.governor import Governor, GovernorRoute
 
-from .scheduler import Job, JobQueue
+from .job_queue import PersistentJobQueue, QueuedJob
 from .runtime import AurelixRuntime
 
 
@@ -19,7 +19,7 @@ class Capability:
 class Orchestrator:
     """Coordinates work through the canonical durable runtime when available."""
 
-    def __init__(self, queue: JobQueue | None = None, governor: Governor | None = None,
+    def __init__(self, queue: PersistentJobQueue | None = None, governor: Governor | None = None,
                  runtime: AurelixRuntime | None = None) -> None:
         if queue is None and runtime is None:
             raise ValueError("queue or runtime is required")
@@ -49,19 +49,17 @@ class Orchestrator:
         if self.runtime is not None:
             return self.runtime.submit(capability, payload)
         assert self.queue is not None
-        return self.queue.enqueue(Job(kind=capability, payload=payload))
+        job_id = f"orchestrator-{capability}-{id(payload)}"
+        self.queue.enqueue(job_id, payload.get("objective", ""))
+        return job_id
 
     def run_once(self) -> bool:
         if self.runtime is not None:
             return self.runtime.run_once()
         assert self.queue is not None
-        job = self.queue.claim()
-        if job is None:
+        queued = [job for job in self.queue.jobs.values() if job.status == "queued"]
+        if not queued:
             return False
-        capability = self._capabilities[job.kind]
-        try:
-            capability.handler(job.payload)
-            self.queue.complete(job.job_id)
-        except Exception as exc:
-            self.queue.fail(job.job_id, str(exc))
+        job: QueuedJob = queued[0]
+        self.queue.execute(job.job_id)
         return True
