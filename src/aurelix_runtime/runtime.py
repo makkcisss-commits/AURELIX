@@ -10,6 +10,7 @@ from uuid import uuid4
 from aurelix_core.evaluation import EvaluationEngine
 from .experiment_runner import ExperimentRunner
 from .integrated_engines import Experiment
+from .message_fabric import MessageFabric
 from .persistence import JobRecord, LeaseLostError, RuntimeStore
 from .pipeline_runner import GovernedPipeline
 
@@ -75,11 +76,11 @@ class AurelixRuntime:
         self.claimed_handlers[kind] = handler
         self.handlers.pop(kind, None)
 
-    def register_autonomy(self, kind: str = "autonomy.run") -> None:
+    def register_autonomy(self, kind: str = "autonomy.run", *, message_fabric: MessageFabric | None = None) -> None:
         """Mount the full research→knowledge→experiment→business fabric on this runtime."""
         from .autonomy_fabric import AutonomyFabric
 
-        fabric = AutonomyFabric(store=self.store)
+        fabric = AutonomyFabric(store=self.store, message_fabric=message_fabric)
 
         def handle(record: JobRecord) -> Any:
             return fabric.run_claimed(record)
