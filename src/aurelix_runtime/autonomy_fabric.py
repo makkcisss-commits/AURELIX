@@ -14,6 +14,8 @@ from .integrated_engines import (
     ResearchEngine,
 )
 from .knowledge_store import SQLiteKnowledgeRepository
+from .message_fabric import AgentMessage, MessageFabric
+from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
 from .persistence import JobRecord, RuntimeStore
 from .research_provider import HttpResearchProvider
 
@@ -40,6 +42,7 @@ class AutonomyRun:
     evaluation: dict[str, Any]
     opportunity: dict[str, Any]
     business: dict[str, Any]
+    mission_id: str = ""
 
 
 class AutonomyFabric:
@@ -49,10 +52,10 @@ class AutonomyFabric:
                  research: ResearchEngine | None = None, academy: AcademyEngine | None = None,
                  knowledge: KnowledgeEngine | None = None, innovation: InnovationEngine | None = None,
                  experiment: ExperimentEngine | None = None, evaluation: EvaluationEngine | None = None,
-                 opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None) -> None:
+                 opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None,
+                 message_fabric: MessageFabric | None = None) -> None:
         self.store = store or RuntimeStore()
-        # Knowledge is stored in the same RuntimeStore database as executions,
-        # so research -> learning -> opportunity does not split across stores.
+        self.message_fabric = message_fabric or MessageFabric()
         self.knowledge_repository = SQLiteKnowledgeRepository(self.store)
         self.engines = engine_store or EngineStore(runtime_store=self.store, knowledge_repository=self.knowledge_repository)
         configured_provider = HttpResearchProvider.from_env()
@@ -65,6 +68,18 @@ class AutonomyFabric:
         self.opportunity = opportunity or OpportunityEngine()
         self.business = business or BusinessEngine(require_approval=True)
         self.experiment_runner = ExperimentRunner(collector=self._collect_observations, on_complete=self._persist_experiment)
+
+    def _emit(self, topic: str, sender: str, execution_id: str, payload: dict[str, Any], *, causation_id: str | None = None) -> None:
+        self.message_fabric.publish(AgentMessage(
+            topic=topic,
+            sender=sender,
+            payload={"execution_id": execution_id, **payload},
+            correlation_id=execution_id,
+            causation_id=causation_id,
+            idempotency_key=f"{execution_id}:{topic}",
+            provenance={"execution_id": execution_id},
+        ))
+        self.store.record_audit(execution_id, "fabric.stage", {"topic": topic, "sender": sender})
 
     def _collect_observations(self, experiment) -> list[dict[str, Any]]:
         with self.store.lock:
@@ -93,6 +108,11 @@ class AutonomyFabric:
         if not objective:
             raise ValueError("research objective is required")
 
+        mission = EconomicMission(objective, source="autonomy", constraints={"execution_id": execution_id})
+        mission.plan(list(DEFAULT_ECONOMIC_TASKS))
+        mission.start()
+        self._emit("mission.started", "orchestrator", execution_id, {"mission_id": mission.mission_id, "objective": objective})
+
         stop = threading.Event()
         heartbeat = threading.Thread(
             target=self._heartbeat_loop,
@@ -100,17 +120,16 @@ class AutonomyFabric:
             name=f"aurelix-lease-{execution_id}", daemon=True,
         )
         heartbeat.start()
-        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id})
+        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id, "mission_id": mission.mission_id})
         try:
             research = self.research.run(objective, self.engines)
-            self.store.record_audit(execution_id, "autonomy.research", {
-                "evidence_count": len(research.get("evidence", [])),
-                "status": research.get("status"),
-                "provider_available": research.get("provider_available"),
-            })
+            self._emit("research.completed", "research", execution_id, {"status": research.get("status"), "evidence_count": len(research.get("evidence", []))})
             academy = self.academy.run(research, self.engines)
+            self._emit("academy.completed", "academy", execution_id, {"status": academy.get("status")})
             knowledge = self.knowledge.run(academy, self.engines)
+            self._emit("knowledge.completed", "knowledge", execution_id, {"status": knowledge.get("status")})
             innovation = self.innovation.run(knowledge, self.engines)
+            self._emit("innovation.completed", "innovation", execution_id, {"status": innovation.get("status")})
             experiment = self.experiment.run(innovation, self.engines)
             if experiment.get("experiment_id"):
                 experiment_record = self.engines.experiments[experiment["experiment_id"]]
@@ -121,9 +140,13 @@ class AutonomyFabric:
                     "criteria": experiment_record.success_criteria,
                     "result": experiment_record.result,
                 }
+            self._emit("experiment.completed", "experiment", execution_id, {"status": experiment.get("status"), "experiment_id": experiment.get("experiment_id")})
             evaluation = self.evaluation.run(experiment, self.engines)
+            self._emit("evaluation.completed", "validation", execution_id, {"status": evaluation.get("status")})
             opportunity = self.opportunity.run(evaluation, self.engines)
+            self._emit("opportunity.completed", "opportunity", execution_id, {"status": opportunity.get("status")})
             business = self.business.run(opportunity, approved=False)
+            self._emit("business.completed", "business", execution_id, {"status": business.get("status"), "approved": False})
             lifecycle_status = business.get("status") or "completed"
             result = _jsonable({
                 "execution_id": execution_id,
@@ -131,12 +154,17 @@ class AutonomyFabric:
                 "research": research, "academy": academy, "knowledge": knowledge,
                 "innovation": innovation, "experiment": experiment, "evaluation": evaluation,
                 "opportunity": opportunity, "business": business,
+                "mission_id": mission.mission_id,
             })
+            mission.complete([{"type": "pipeline_result", "status": lifecycle_status, "verified": lifecycle_status == "completed"}])
             self.store.complete(execution_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
-            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id})
+            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id, "mission_id": mission.mission_id})
+            self._emit("mission.completed", "orchestrator", execution_id, {"mission_id": mission.mission_id, "status": lifecycle_status})
             return AutonomyRun(**result)
         except Exception as exc:
-            self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__})
+            mission.block(type(exc).__name__)
+            self._emit("mission.blocked", "orchestrator", execution_id, {"mission_id": mission.mission_id, "reason": type(exc).__name__})
+            self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__, "mission_id": mission.mission_id})
             raise
         finally:
             stop.set()
