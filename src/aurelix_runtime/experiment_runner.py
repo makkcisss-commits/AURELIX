@@ -31,9 +31,7 @@ class ExperimentRunner:
 
     def execute(self, experiment: Experiment) -> ExperimentRun:
         if experiment.status == "complete" and experiment.result is not None:
-            run = ExperimentRun(experiment.id, experiment.hypothesis, status="complete")
-            run.result = None if False else None  # compatibility: result remains on Experiment
-            return run
+            return ExperimentRun(experiment.id, experiment.hypothesis, status="complete")
 
         run = ExperimentRun(experiment.id, experiment.hypothesis)
         run.status = "running"
