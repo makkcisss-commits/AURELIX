@@ -5,9 +5,11 @@ def test_system_cycle_schedule_is_singleton():
     system = AurelixSystem()
     try:
         system.schedule_system_cycle("default-autonomy", 900, "override objective")
-        schedules = [s for s in system.scheduler.schedules if s.job_kind == "system.cycle"]
+        system.schedule_system_cycle("default-autonomy", 60, "replacement objective")
+        schedules = [s for s in system.scheduler.schedules if s.name == "default-autonomy"]
         assert len(schedules) == 1
-        assert schedules[0].name == "default-autonomy"
-        assert schedules[0].payload["objective"] == "override objective"
+        assert schedules[0].job_kind == "system.cycle"
+        assert schedules[0].interval_seconds == 60
+        assert schedules[0].payload["objective"] == "replacement objective"
     finally:
         system.close()
