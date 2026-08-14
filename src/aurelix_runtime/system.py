@@ -184,6 +184,8 @@ class AurelixSystem:
             "store": "shared",
             "scheduler": "shared-runtime",
             "governor": "canonical-submission-boundary",
+            "fabric": "structured-topic-router",
+            "mission": {"id": self.mission.mission_id, "state": self.mission.state.value, "objective": self.mission.objective},
             "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled",
             "system_cycle": "registered" if "system.cycle" in self.runtime.handlers else "disabled",
             "schedules": [s.name for s in self.scheduler.schedules],
