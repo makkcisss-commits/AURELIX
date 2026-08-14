@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .runtime import AurelixRuntime, RuntimeConfig
 from .scheduler import Schedule, Scheduler, SchedulerConfig
@@ -20,11 +20,16 @@ class SystemConfig:
 class AurelixSystem:
     """Canonical composition root: one store, queue, worker, scheduler and fabric."""
 
-    def __init__(self, config: SystemConfig | None = None) -> None:
+    def __init__(self, config: SystemConfig | None = None, *, runtime: AurelixRuntime | None = None,
+                 cycle_handler: Callable[[str], Any] | None = None) -> None:
         self.config = config or SystemConfig()
-        self.runtime = AurelixRuntime(self.config.runtime)
-        if self.config.enable_autonomy:
+        self.runtime = runtime or AurelixRuntime(self.config.runtime)
+        self._owns_runtime = runtime is None
+        if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
+        self.cycle_handler = cycle_handler
+        if cycle_handler is not None:
+            self.runtime.register("system.cycle", lambda payload: cycle_handler(str(payload.get("objective", ""))))
         self.scheduler = Scheduler(submit=self.runtime.submit, config=self.config.scheduler)
         self._stop = threading.Event()
         self._started = False
@@ -40,9 +45,21 @@ class AurelixSystem:
         return "stopping" if self._stop.is_set() else ("running" if self._started else "stopped")
 
     def schedule_autonomy(self, name: str, interval_seconds: float, objective: str) -> None:
+        self._schedule(name, interval_seconds, "autonomy.run", objective)
+
+    def schedule_system_cycle(self, name: str, interval_seconds: float, objective: str) -> None:
+        if self.cycle_handler is None:
+            raise RuntimeError("system cycle handler is not configured")
+        self._schedule(name, interval_seconds, "system.cycle", objective)
+
+    def _schedule(self, name: str, interval_seconds: float, job_kind: str, objective: str) -> None:
+        if not name.strip():
+            raise ValueError("schedule name is required")
+        if interval_seconds < 1:
+            raise ValueError("interval_seconds must be >= 1")
         if not objective.strip():
             raise ValueError("objective is required")
-        schedule = Schedule(name, interval_seconds, "autonomy.run", {"objective": objective})
+        schedule = Schedule(name, interval_seconds, job_kind, {"objective": objective})
         with self._schedule_lock:
             self.scheduler.add(schedule)
             self._next_run.setdefault(name, time.monotonic())
@@ -100,12 +117,21 @@ class AurelixSystem:
             self.stop()
 
     def health(self) -> dict[str, Any]:
-        return {"status": self.status, "worker_id": self.runtime.worker_id, "store": "shared", "scheduler": "shared-runtime", "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled"}
+        return {
+            "status": self.status,
+            "worker_id": self.runtime.worker_id,
+            "store": "shared",
+            "scheduler": "shared-runtime",
+            "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled",
+            "system_cycle": "registered" if "system.cycle" in self.runtime.handlers else "disabled",
+            "schedules": [s.name for s in self.scheduler.schedules],
+        }
 
     def close(self) -> None:
         if self._started:
             self.stop()
-        self.runtime.close()
+        if self._owns_runtime:
+            self.runtime.close()
 
 
 __all__ = ["AurelixSystem", "SystemConfig"]
