@@ -79,6 +79,7 @@ class SystemDiagnostics:
             "message_fabric": fabric.message_fabric is self.factory.message_fabric,
             "capability_escalator": fabric.capability_escalator is self.factory.capability_escalator,
             "adaptive_loop": fabric.adaptive_loop is self.factory.adaptive_loop,
+            "experiment_runner": fabric.experiment_runner is self.factory.experiment_runner,
         }
         if not all(shared_engines.values()):
             return DiagnosticCheck("canonical_composition", "failed", "high", "multiple composition instances detected", shared_engines)
@@ -86,22 +87,31 @@ class SystemDiagnostics:
 
     def _experiment_execution(self) -> DiagnosticCheck:
         executor = getattr(self.factory, "experiment_executor", None)
+        runner = getattr(self.factory, "experiment_runner", None)
+        runtime = getattr(self.factory, "runtime", None)
+        handler_registered = bool(runtime and "experiment.run" in getattr(runtime, "handlers", {}))
         if executor is None:
             return DiagnosticCheck(
                 "experiment_execution", "failed", "high",
                 "no real experiment executor is mounted; experiments cannot produce measurements",
-                {"configured": False, "validation_allowed": False},
+                {"configured": False, "runner": runner is not None, "job_registered": handler_registered, "validation_allowed": False},
             )
         if not callable(executor):
             return DiagnosticCheck(
                 "experiment_execution", "failed", "high",
                 "experiment executor is configured but not callable",
-                {"configured": True, "callable": False},
+                {"configured": True, "callable": False, "runner": runner is not None, "job_registered": handler_registered},
+            )
+        if runner is None or not handler_registered:
+            return DiagnosticCheck(
+                "experiment_execution", "failed", "high",
+                "experiment executor exists but durable experiment.run wiring is incomplete",
+                {"configured": True, "callable": True, "runner": runner is not None, "job_registered": handler_registered, "validation_allowed": False},
             )
         return DiagnosticCheck(
             "experiment_execution", "ok", "info",
-            "a real experiment executor is mounted through the composition root",
-            {"configured": True, "callable": True, "validation_allowed": True},
+            "a real experiment executor is mounted through the canonical durable composition",
+            {"configured": True, "callable": True, "runner": True, "job_registered": True, "validation_allowed": True},
         )
 
     def _economic_feedback(self) -> DiagnosticCheck:
