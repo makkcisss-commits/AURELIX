@@ -217,9 +217,9 @@ def knowledge(q: str = "", limit: int = 20, request: ReadOnlyRequest = Depends(r
 
 @app.get("/v1/control/audit")
 def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
-    response = _api.get_audit(request, limit)
+    response = _api.get_audit(request)
     if response.status != 200:
-        raise HTTPException(status_code=403, detail=response.body["error"])
+        raise HTTPException(status_code=response.status, detail=response.body["error"])
     return response.body
 
 
