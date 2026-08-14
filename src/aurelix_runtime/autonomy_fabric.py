@@ -200,6 +200,8 @@ class AutonomyFabric:
             if experiment.get("experiment_id"):
                 experiment_record = self.engines.experiments[experiment["experiment_id"]]
                 experiment_run = self.experiment_runner.execute(experiment_record)
+                self.engines.experiments[experiment_record.id] = experiment_record
+                self.engines.persist()
                 experiment = {"experiment_id": experiment_record.id, "status": experiment_run.status, "criteria": experiment_record.success_criteria, "result": experiment_record.result}
             self._emit("experiment.completed", "experiment", execution_id, {"status": experiment.get("status"), "experiment_id": experiment.get("experiment_id")})
             evaluation = self.evaluation.run(experiment, self.engines)
@@ -222,7 +224,8 @@ class AutonomyFabric:
             raise
         finally:
             stop.set()
-            heartbeat.join(timeout=max(1.0, self.store.lease_seconds / 2.0))
+            heartbeat.join(timeout=max(1.0, self.store.lease_seconds / 2.0)
+)
 
     def run(self, objective: str, execution_id: str | None = None, required_capabilities: list[str] | None = None) -> AutonomyRun:
         execution_id = execution_id or str(uuid4())
