@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .capability_escalation import CapabilityEscalator
-from .continuous_intelligence import ContinuousIntelligence, Evidence, EvidenceKind
+from .continuous_intelligence import ContinuousIntelligence, Evidence, EvidenceKind, EvaluationStatus
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,36 @@ class AdaptiveLoop:
         return self.intelligence.record_evidence(
             objective_id=objective_id, kind=kind, reference=reference,
             strength=strength, notes=notes,
+        )
+
+    def validate_learning(self, *, execution_id: str, capability: str,
+                          objective_id: str, evaluation_id: str,
+                          evidence_refs: tuple[str, ...]) -> Any:
+        """Convert Academy learning into an operational capability only after a pass."""
+        mission = self.missions.get(execution_id)
+        if mission is None:
+            raise KeyError(execution_id)
+        evaluation = self.intelligence.evaluations.get(evaluation_id)
+        if evaluation is None:
+            raise KeyError(evaluation_id)
+        if evaluation.objective_id != objective_id:
+            raise ValueError("evaluation does not belong to objective")
+        if evaluation.status is not EvaluationStatus.PASSED:
+            raise RuntimeError("learning evaluation did not pass")
+        if not evidence_refs or not set(evidence_refs).issubset(evaluation.evidence_refs):
+            raise ValueError("capability evidence must be covered by the passed evaluation")
+        if capability.casefold() not in {item.casefold() for item in mission.required_capabilities}:
+            raise ValueError("capability is not required by mission")
+        objective = self.intelligence.objectives.get(objective_id)
+        if objective is None:
+            raise KeyError(objective_id)
+        if capability.casefold() not in {item.casefold() for item in objective.target_competencies}:
+            raise ValueError("capability is not a target competency of the learning objective")
+        return self.intelligence.validate_capability(
+            name=capability,
+            domain=objective.domain,
+            required_competencies=objective.target_competencies,
+            evidence_refs=evidence_refs,
         )
 
     def capability_validated(self, capability: str) -> bool:
