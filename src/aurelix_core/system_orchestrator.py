@@ -17,7 +17,6 @@ from .continuous_intelligence import ContinuousIntelligence
 from .economic_attribution import EconomicAttribution, EconomicAttributionLedger
 from .governor import Governor
 from .learning import LearningEngine
-from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .verified_economic_learning import VerifiedEconomicLearning
 
 
@@ -180,7 +179,21 @@ class SystemOrchestrator:
         fresh = self.verified_learning.emit()
         return {
             "new_signals": len(fresh),
-            "signals": [asdict(signal) | {"realization_ratio": signal.realization_ratio, "evidence_type": signal.evidence_type} for signal in fresh],
+            "signals": [
+                {
+                    "opportunity_id": signal.opportunity_id,
+                    "source_id": signal.source_id,
+                    "governor_decision_id": signal.governor_decision_id,
+                    "resource_scope": signal.resource_scope,
+                    "expected_daily_eur": str(signal.expected_daily_eur),
+                    "observed_daily_eur": str(signal.observed_daily_eur),
+                    "variance_daily_eur": str(signal.variance_daily_eur),
+                    "realization_ratio": str(signal.realization_ratio),
+                    "evidence_type": signal.evidence_type,
+                    "verified": signal.verified,
+                }
+                for signal in fresh
+            ],
             "context": self.verified_learning.learning_context(),
         }
 
