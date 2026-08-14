@@ -11,7 +11,7 @@ concurrency:
 jobs:
   system-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -28,16 +28,8 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
-      - name: Run system regression suite
-        run: >-
-          python -m pytest -q
-          tests/test_engine_factory_composition.py
-          tests/test_integrated_intelligence_flow.py
-          tests/test_intelligence_flow.py
-          tests/test_system_diagnostics_and_developer.py
-          tests/test_opportunity_revenue_bridge.py
-          tests/test_approval_workflow.py
-          tests/test_innovation.py
+      - name: Run complete system regression suite
+        run: python -m pytest -q
 
       - name: Run packaged smoke checks
         run: aurelix-smoke
