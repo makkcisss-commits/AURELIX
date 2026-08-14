@@ -1,86 +1,103 @@
 import pytest
 
 from aurelix_core.continuous_intelligence import (
-    Capability,
     ContinuousIntelligence,
-    Evidence,
-    Evaluation,
-    Experiment,
+    EvidenceKind,
+    EvaluationStatus,
     KnowledgeState,
-    StudyObjective,
 )
 
 
 def test_domain_discovery_is_generic_and_extensible():
     intelligence = ContinuousIntelligence()
     domain = intelligence.discover_domain("Astrobiology")
+    assert domain == "Astrobiology"
+    assert domain in intelligence.domains
 
-    assert domain.name == "Astrobiology"
-    assert domain.domain_id in intelligence.domains
 
-
-def test_study_requires_a_known_domain_and_objective():
+def test_study_objective_is_generic_and_domain_agnostic():
     intelligence = ContinuousIntelligence()
-    intelligence.discover_domain("Engineering")
-
-    objective = StudyObjective(
-        objective_id="obj-1",
-        domain_id=next(iter(intelligence.domains)),
-        description="Validate a new engineering technique",
+    objective = intelligence.propose_objective(
+        domain="Engineering",
+        title="Validate a new engineering technique",
+        question="Does the technique improve the measured outcome?",
     )
-    intelligence.add_objective(objective)
-
-    assert intelligence.objectives["obj-1"] == objective
+    assert objective.domain == "Engineering"
+    assert objective.objective_id in intelligence.objectives
 
     with pytest.raises(ValueError):
-        intelligence.add_objective(
-            StudyObjective("obj-2", "missing-domain", "invalid")
-        )
+        intelligence.propose_objective(domain="Engineering", title="", question="invalid")
 
 
 def test_evidence_experiment_evaluation_and_capability_form_a_lifecycle():
     intelligence = ContinuousIntelligence()
-    domain = intelligence.discover_domain("Engineering")
-    objective = intelligence.add_objective(
-        StudyObjective("obj-1", domain.domain_id, "Build and validate a capability")
+    objective = intelligence.propose_objective(
+        domain="Engineering",
+        title="Build and validate a capability",
+        question="Can the capability be demonstrated?",
     )
     evidence = intelligence.record_evidence(
-        Evidence("ev-1", objective.objective_id, "test-result", confidence=0.9)
+        objective_id=objective.objective_id,
+        kind=EvidenceKind.EXPERIMENT,
+        reference="sandbox-result",
+        strength=0.9,
     )
-    experiment = intelligence.record_experiment(
-        Experiment("exp-1", objective.objective_id, "sandbox", evidence_ids=(evidence.evidence_id,))
+    experiment = intelligence.propose_experiment(
+        objective_id=objective.objective_id,
+        hypothesis="The capability will pass the sandbox criterion",
+        method="bounded sandbox",
+        success_criteria=("criterion passes",),
     )
     evaluation = intelligence.evaluate(
-        Evaluation("eval-1", experiment.experiment_id, score=0.85, passed=True)
+        objective_id=objective.objective_id,
+        score=0.85,
+        evidence_refs=(evidence.evidence_id,),
     )
-    capability = intelligence.register_capability(
-        Capability(
-            capability_id="cap-1",
-            domain_id=domain.domain_id,
-            name="validated-engineering-capability",
-            evaluation_ids=(evaluation.evaluation_id,),
+    capability = intelligence.validate_capability(
+        name="validated-engineering-capability",
+        domain="Engineering",
+        required_competencies=("engineering",),
+        evidence_refs=(evidence.evidence_id,),
+    )
+
+    assert experiment.experiment_id in intelligence.experiments
+    assert evaluation.status is EvaluationStatus.PASSED
+    assert capability.validated is True
+
+
+def test_knowledge_requires_evidence_and_tracks_validation_state():
+    intelligence = ContinuousIntelligence()
+    objective = intelligence.propose_objective(
+        domain="Science", title="Validate claim", question="Is the claim supported?"
+    )
+    evidence = intelligence.record_evidence(
+        objective_id=objective.objective_id,
+        kind=EvidenceKind.SOURCE,
+        reference="trusted-source",
+        strength=0.95,
+    )
+    knowledge = intelligence.record_knowledge(
+        domain="Science",
+        claim="validated claim",
+        evidence_refs=(evidence.evidence_id,),
+        confidence=0.9,
+        state=KnowledgeState.VALIDATED,
+    )
+    assert knowledge.state is KnowledgeState.VALIDATED
+    assert knowledge.evidence_refs == (evidence.evidence_id,)
+
+    with pytest.raises(ValueError):
+        intelligence.record_knowledge(
+            domain="Science", claim="invalid", evidence_refs=(), confidence=0.9
         )
-    )
-
-    assert evidence.objective_id == objective.objective_id
-    assert experiment.evidence_ids == (evidence.evidence_id,)
-    assert evaluation.passed is True
-    assert capability.evaluation_ids == (evaluation.evaluation_id,)
 
 
-def test_knowledge_lifecycle_rejects_invalid_transition():
+def test_capability_requires_evidence():
     intelligence = ContinuousIntelligence()
-    knowledge = intelligence.create_knowledge("claim-1", KnowledgeState.CANDIDATE)
-
     with pytest.raises(ValueError):
-        intelligence.transition_knowledge(knowledge.knowledge_id, KnowledgeState.VALIDATED)
-
-
-def test_capability_cannot_be_registered_without_evaluation():
-    intelligence = ContinuousIntelligence()
-    domain = intelligence.discover_domain("Science")
-
-    with pytest.raises(ValueError):
-        intelligence.register_capability(
-            Capability("cap-1", domain.domain_id, "unproven", evaluation_ids=())
+        intelligence.validate_capability(
+            name="unproven",
+            domain="Science",
+            required_competencies=(),
+            evidence_refs=(),
         )
