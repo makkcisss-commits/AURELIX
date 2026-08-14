@@ -15,7 +15,7 @@ from .execution import ExecutionRequest, ExecutionResult, ExecutionRuntime
 from .governor import Governor, GovernorRoute
 from .opportunities import Opportunity, OpportunityStage
 from .opportunity_revenue_bridge import OpportunityRevenueBridge, RevenueSource
-from .resource_scope import ResourceKind, ResourcePermission, ResourceRequest
+from .resource_scope import ResourceKind, ResourcePermission, ResourceRequest, authorize_resource
 
 
 @dataclass(frozen=True)
@@ -56,15 +56,18 @@ class OpportunityExecutionBridge:
         if opportunity.stage is not OpportunityStage.APPROVED:
             raise ValueError("opportunity must be approved before execution")
 
-        route = self.governor.route(
+        orchestration = self.governor.route(
             source=opportunity.opportunity_id,
             action="business.execute",
             requires_capital=requires_capital,
             risk=opportunity.risk,
             production_change=production_change,
         )
+        route = orchestration.route
         if route is not GovernorRoute.POLICY_ALLOWED:
-            return OpportunityExecutionOutcome(opportunity.opportunity_id, route, False, None, None, Decimal("0"))
+            return OpportunityExecutionOutcome(
+                opportunity.opportunity_id, route, False, None, None, Decimal("0")
+            )
 
         source: RevenueSource = self.revenue.admit(
             opportunity,
@@ -81,6 +84,8 @@ class OpportunityExecutionBridge:
             ),
             permission=permission,
         )
+        # Fail closed before invoking the caller-supplied operation.
+        authorize_resource(request.resource, permission)
         result = self.runtime.execute(request, operation)
 
         observed = Decimal("0")
