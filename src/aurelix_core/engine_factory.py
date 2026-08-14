@@ -8,10 +8,13 @@ from typing import Any
 from .development_providers import DevelopmentModelProvider, development_research_provider
 from .evaluation import EvaluationEngine as CoreEvaluationEngine
 from .economic_feedback import EconomicFeedback
+from .governor import Governor
+from .audit import AuditLog
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .policy import PolicyEngine
 from .revenue_portfolio import RevenuePortfolio
+from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.integrated_engines import (
     AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
@@ -45,6 +48,8 @@ class EngineFactory:
         if self.config.register_autonomy:
             self.runtime.register_autonomy()
         self.policy_engine = PolicyEngine()
+        self.audit = AuditLog()
+        self.governor = Governor(policy=self.policy_engine, audit=self.audit)
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
         self.model_provider = model_provider if model_provider is not None else (
             DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env()
@@ -84,6 +89,7 @@ class EngineFactory:
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
         self.system_validation = SystemValidation(self)
         self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer)
+        self.system_orchestrator = SystemOrchestrator(self)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
         if provider is None:
@@ -117,6 +123,15 @@ class EngineFactory:
 
     def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
         return self.enterprise.run(objective, approved=approved)
+
+    def run_system_cycle(self, objective: str):
+        return self.system_orchestrator.run_cycle(objective)
+
+    def record_verified_economic_outcome(self, **kwargs):
+        return self.system_orchestrator.record_verified_economic_outcome(**kwargs)
+
+    def system_status(self):
+        return self.system_orchestrator.status()
 
     def diagnose(self):
         return self.diagnostics.run()

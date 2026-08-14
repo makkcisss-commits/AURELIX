@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -16,23 +18,28 @@ from .identity import Identity, register_secret
 from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
+from aurelix_runtime.system import AurelixSystem
 
-app = FastAPI(title="AURELIX Private API", version="0.3.0", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="AURELIX Private API", version="0.4.0", docs_url=None, redoc_url=None, openapi_url=None)
 
 _OWNER_ID = os.getenv("AURELIX_OWNER_ID", "owner")
 _OWNER_SECRET = os.getenv("AURELIX_OWNER_SECRET")
 _identity = Identity(_OWNER_ID, "owner")
 _credential = register_secret(_OWNER_ID, _OWNER_SECRET) if _OWNER_SECRET else None
 _factory_error: str | None = None
+_system: AurelixSystem | None = None
+_system_thread: threading.Thread | None = None
 
 try:
     _factory = EngineFactory()
     _runtime = _factory.runtime
     _flow = IntelligenceFlow(_factory)
+    _system = AurelixSystem(runtime=_runtime, cycle_handler=_factory.run_system_cycle)
 except Exception as exc:
     _factory = None
     _runtime = None
     _flow = None
+    _system = None
     _factory_error = type(exc).__name__
 
 
@@ -42,6 +49,20 @@ class ResearchRequest(BaseModel):
 
 class ExperimentExecutionRequest(BaseModel):
     observations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ObjectiveRequest(BaseModel):
+    objective: str = Field(min_length=1, max_length=2000)
+
+
+class EconomicOutcomeRequest(BaseModel):
+    opportunity_id: str = Field(min_length=1, max_length=200)
+    source_id: str = Field(min_length=1, max_length=200)
+    expected_daily_eur: Decimal = Field(ge=0)
+    observed_daily_eur: Decimal = Field(ge=0)
+    governor_decision_id: str = Field(min_length=1, max_length=200)
+    resource_scope: str | None = Field(default=None, max_length=500)
+    external_reference: str | None = Field(default=None, max_length=500)
 
 
 class DevelopmentRequest(BaseModel):
@@ -66,6 +87,7 @@ def _live_snapshot() -> dict:
         "providers": {"model_configured": _factory.model_provider is not None, "research_configured": _factory.research_provider is not None, "knowledge_backend": type(_factory.knowledge).__name__},
         "experiments": {"total": len(experiments), "active": len([x for x in experiments if x["status"] in {"proposed", "running", "measuring", "evaluation"}]), "completed": len([x for x in experiments if x["status"] == "complete"])},
         "knowledge": {"total_items": _factory.knowledge.count(), "recent": [{"id": item.id, "title": item.title, "tags": item.tags, "created_at": item.created_at} for item in recent_knowledge]},
+        "autonomy": _system.health() if _system is not None else {"status": "unavailable"},
         "audit_events": _runtime.store.audit_summary(20)["recent"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -94,6 +116,32 @@ def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOn
     return ReadOnlyRequest(_identity, _credential, x_aurelix_secret)
 
 
+@app.on_event("startup")
+def start_unified_system() -> None:
+    global _system_thread
+    if _system is None:
+        return
+    enabled = os.getenv("AURELIX_AUTONOMY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    if not enabled:
+        return
+    interval = float(os.getenv("AURELIX_AUTONOMY_INTERVAL_SECONDS", "900"))
+    objective = os.getenv(
+        "AURELIX_AUTONOMY_OBJECTIVE",
+        "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
+    )
+    _system.schedule_system_cycle("default-autonomy", interval, objective)
+    _system_thread = threading.Thread(target=_system.run_forever, name="aurelix-system", daemon=True)
+    _system_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_unified_system() -> None:
+    if _system is not None:
+        _system.stop()
+    if _system_thread is not None:
+        _system_thread.join(timeout=5)
+
+
 @app.get("/health", include_in_schema=False)
 def health():
     return _api.get_health().body
@@ -114,6 +162,13 @@ def snapshot(request: ReadOnlyRequest = Depends(require_owner)):
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["error"])
     return response.body
+
+
+@app.get("/v1/control/autonomy")
+def autonomy_status(request: ReadOnlyRequest = Depends(require_owner)):
+    if _system is None or _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    return {"system": _system.health(), "orchestrator": _factory.system_status()}
 
 
 @app.get("/v1/control/diagnostics")
@@ -164,6 +219,34 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
         return _flow.research_to_experiment(payload.query)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"research_flow_failed: {type(exc).__name__}") from exc
+
+
+@app.post("/v1/actions/objectives")
+def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    if _system is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    job_id = _system.submit("system.cycle", {"objective": payload.objective})
+    return {"job_id": job_id, "status": "queued", "execution": "governed_system_cycle"}
+
+
+@app.post("/v1/actions/economic/outcomes")
+def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    if _factory is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    try:
+        entry = _factory.record_verified_economic_outcome(**payload.model_dump())
+        return {
+            "opportunity_id": entry.opportunity_id,
+            "source_id": entry.source_id,
+            "governor_decision_id": entry.governor_decision_id,
+            "resource_scope": entry.resource_scope,
+            "expected_daily_eur": str(entry.expected_daily_eur),
+            "observed_daily_eur": str(entry.observed_daily_eur),
+            "variance_daily_eur": str(entry.variance_daily_eur),
+            "verified": entry.verified,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"economic_outcome_rejected: {type(exc).__name__}") from exc
 
 
 @app.post("/v1/actions/experiments/{experiment_id}/execute")
