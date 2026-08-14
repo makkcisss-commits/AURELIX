@@ -108,6 +108,37 @@ class AutonomyFabric:
             row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (f"mission:{execution_id}",)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def _claim_resume_execution(self, blocked_execution_id: str) -> str:
+        key = f"mission-resume:{blocked_execution_id}"
+        resume_execution_id = f"{blocked_execution_id}:resume:{uuid4()}"
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (key,)).fetchone()
+                if row is not None:
+                    existing = json.loads(row[0])
+                    state = existing.get("state")
+                    if state in {"reserved", "running"}:
+                        self.store.db.commit()
+                        raise RuntimeError("mission resume already in progress")
+                    if state == "completed" and existing.get("execution_id"):
+                        self.store.db.commit()
+                        return str(existing["execution_id"])
+                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id}, sort_keys=True)))
+                self.store.db.commit()
+                return resume_execution_id
+            except Exception:
+                self.store.db.rollback()
+                raise
+
+    def _mark_resume_running(self, blocked_execution_id: str, execution_id: str) -> None:
+        with self.store.lock, self.store.db:
+            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps({"state": "running", "execution_id": execution_id}, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
+
+    def _mark_resume_completed(self, blocked_execution_id: str, execution_id: str) -> None:
+        with self.store.lock, self.store.db:
+            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps({"state": "completed", "execution_id": execution_id}, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
+
     def _capability_learning_result(self, claimed: JobRecord, mission: EconomicMission, required_capabilities: list[str]) -> AutonomyRun:
         unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
         if not unknown:
@@ -225,9 +256,18 @@ class AutonomyFabric:
         if not self.adaptive_loop.can_resume(blocked_execution_id):
             raise RuntimeError("required capabilities are not validated")
         self.adaptive_loop.resume_ready(blocked_execution_id)
-        resume_execution_id = f"{blocked_execution_id}:resume:{uuid4()}"
-        self.store.record_audit(blocked_execution_id, "autonomy.mission_resuming", {"mission_id": context["mission_id"], "resume_execution_id": resume_execution_id})
-        return self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
+        resume_execution_id = self._claim_resume_execution(blocked_execution_id)
+        existing = self.store.get(resume_execution_id)
+        if existing is not None and existing.status == "completed":
+            result = self.store.get_result(resume_execution_id)
+            return AutonomyRun(**result)
+        self._mark_resume_running(blocked_execution_id, resume_execution_id)
+        try:
+            result = self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
+            self._mark_resume_completed(blocked_execution_id, resume_execution_id)
+            return result
+        except Exception:
+            raise
 
     def close(self) -> None:
         self.store.close()
