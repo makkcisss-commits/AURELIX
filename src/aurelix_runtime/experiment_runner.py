@@ -30,12 +30,35 @@ class ExperimentRunner:
         self.on_complete = on_complete
 
     def execute(self, experiment: Experiment) -> ExperimentRun:
+        if experiment.status == "complete" and experiment.result is not None:
+            run = ExperimentRun(experiment.id, experiment.hypothesis, status="complete")
+            run.result = None if False else None  # compatibility: result remains on Experiment
+            return run
+
         run = ExperimentRun(experiment.id, experiment.hypothesis)
         run.status = "running"
         observations = self.collector(experiment)
         run.observations = list(observations)
+
+        # Absence of measurement is a real state, never an implicit failure or success.
+        if not run.observations:
+            run.status = "awaiting_measurement"
+            experiment.status = "awaiting_measurement"
+            experiment.result = None
+            if self.on_complete:
+                self.on_complete(experiment, run)
+            return run
+
         run.status = "measuring"
         run.metrics = self.compute_metrics(run.observations)
+        if not run.metrics:
+            run.status = "awaiting_measurement"
+            experiment.status = "awaiting_measurement"
+            experiment.result = None
+            if self.on_complete:
+                self.on_complete(experiment, run)
+            return run
+
         run.status = "evaluation"
         criteria = [c for c in experiment.success_criteria if isinstance(c, dict)]
         run.evaluation = self.evaluator.evaluate(experiment.id, criteria, run.metrics)
