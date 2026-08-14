@@ -50,7 +50,11 @@ class AurelixSystem:
         self._started = False
         self._next_run: dict[str, float] = {}
         self._schedule_lock = threading.RLock()
-        if self.config.enable_autonomy:
+        # There must be exactly one autonomous scheduler per running system.
+        # When an external cycle handler is supplied (the production composition
+        # root does this), that handler owns the autonomous cycle. Otherwise the
+        # runtime-native autonomy handler is the standalone default.
+        if self.config.enable_autonomy and self.cycle_handler is None:
             self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
     @property
@@ -188,10 +192,6 @@ class AurelixSystem:
         }
 
     def close(self) -> None:
-        if self._started:
-            self.stop()
+        self.stop()
         if self._owns_runtime:
             self.runtime.close()
-
-
-__all__ = ["AurelixSystem", "SystemConfig"]
