@@ -1,6 +1,7 @@
 """Governed bridge from approved opportunities into bounded Runtime execution.
 
 The bridge is intentionally narrow: Opportunity describes a business candidate,
+EconomicQualification proves the opportunity is ready for the revenue pipeline,
 Governor decides whether the requested action may proceed, ExecutionRuntime
 performs only a caller-supplied bounded operation, and realized revenue is
 recorded through OpportunityRevenueBridge for later economic learning.
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable
 
+from .economic_opportunity_validation import EconomicQualification
 from .execution import ExecutionRequest, ExecutionResult, ExecutionRuntime
 from .governor import Governor, GovernorRoute
 from .opportunities import Opportunity, OpportunityStage
@@ -29,7 +31,7 @@ class OpportunityExecutionOutcome:
 
 
 class OpportunityExecutionBridge:
-    """Connect approved opportunity, Governor, Runtime and realized revenue."""
+    """Connect a qualified, approved opportunity to Governor, Runtime and revenue."""
 
     def __init__(
         self,
@@ -45,6 +47,7 @@ class OpportunityExecutionBridge:
         self,
         opportunity: Opportunity,
         *,
+        qualification: EconomicQualification,
         actor_id: str,
         owner_role: str,
         channel: str,
@@ -55,6 +58,8 @@ class OpportunityExecutionBridge:
     ) -> OpportunityExecutionOutcome:
         if opportunity.stage is not OpportunityStage.APPROVED:
             raise ValueError("opportunity must be approved before execution")
+        if qualification.opportunity_id != opportunity.opportunity_id or not qualification.is_qualified:
+            raise ValueError("opportunity must have matching economic qualification before execution")
 
         orchestration = self.governor.route(
             source=opportunity.opportunity_id,
@@ -84,6 +89,7 @@ class OpportunityExecutionBridge:
 
         source: RevenueSource = self.revenue.admit(
             opportunity,
+            qualification=qualification,
             owner_role=owner_role,
             channel=channel,
         )

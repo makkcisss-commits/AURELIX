@@ -31,13 +31,23 @@ class EconomicFeedback:
         productive = [s for s in signals if s.productive]
         realized = sum((s.observed_daily_eur for s in signals), Decimal("0"))
         expected = sum((s.expected_daily_eur for s in signals), Decimal("0"))
+        ratio = realized / expected if expected > 0 else Decimal("0")
         return {
             "sources": len(sources),
             "productive_sources": len(productive),
             "daily_realized_eur": realized,
             "daily_expected_eur": expected,
-            "realization_ratio": (realized / expected if expected > 0 else Decimal("0")),
-            "signals": [s.__dict__ for s in signals],
+            "realization_ratio": ratio,
+            "signals": [
+                {
+                    "source_id": s.source_id,
+                    "observed_daily_eur": s.observed_daily_eur,
+                    "expected_daily_eur": s.expected_daily_eur,
+                    "realization_ratio": s.realization_ratio,
+                    "productive": s.productive,
+                }
+                for s in signals
+            ],
         }
 
     @staticmethod
@@ -55,9 +65,16 @@ class EconomicFeedback:
 
     def learning_context(self) -> dict[str, Any]:
         snap = self.snapshot()
+        has_realized_observation = any(
+            signal["observed_daily_eur"] > 0 for signal in snap["signals"]
+        )
         return {
             "objective": "economic performance feedback",
-            "verified_financial_outcome": True,
+            "verified_financial_outcome": has_realized_observation,
+            "productive_sources": snap["productive_sources"],
+            "average_realization_ratio": snap["realization_ratio"],
+            "daily_realized_eur": snap["daily_realized_eur"],
+            "daily_expected_eur": snap["daily_expected_eur"],
             "portfolio": snap,
             "rule": "only realized revenue is financial evidence; forecasts remain forecasts",
         }

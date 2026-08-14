@@ -24,38 +24,48 @@ class SystemConfig:
 
 
 class AurelixSystem:
-    """Canonical composition root: one store, queue, worker, scheduler, fabric and governance boundary."""
+    """Canonical long-running facade over one EngineFactory composition."""
 
     def __init__(self, config: SystemConfig | None = None, *, runtime: AurelixRuntime | None = None,
                  cycle_handler: Callable[[str], Any] | None = None,
-                 governor: Governor | None = None) -> None:
+                 governor: Governor | None = None, factory=None) -> None:
         self.config = config or SystemConfig()
         if self.config.economic_cycle_seconds < 1:
             raise ValueError("economic_cycle_seconds must be >= 1")
-        self.runtime = runtime or AurelixRuntime(self.config.runtime)
-        self._owns_runtime = runtime is None
-        self.governor = governor or Governor()
-        self.fabric = MessageFabric()
+        self.factory = factory
+        if factory is not None:
+            self.runtime = factory.runtime
+            self._owns_runtime = False
+            self.governor = factory.governor
+            self.fabric = factory.message_fabric
+            self.cycle_handler = cycle_handler or factory.run_system_cycle
+        else:
+            self.runtime = runtime or AurelixRuntime(self.config.runtime)
+            self._owns_runtime = runtime is None
+            self.governor = governor or Governor()
+            self.fabric = MessageFabric()
+            self.cycle_handler = cycle_handler
+
         self.mission = EconomicMission(self.config.economic_objective, source="system")
         self.mission.plan(list(DEFAULT_ECONOMIC_TASKS))
         self.fabric.subscribe("governor.decision", self._record_governor_message)
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
-        self.cycle_handler = cycle_handler
-        if cycle_handler is not None:
-            self.runtime.register("system.cycle", lambda payload: cycle_handler(str(payload.get("objective", ""))))
+        if self.cycle_handler is not None:
+            self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
+
         self.scheduler = Scheduler(submit=self.submit, config=self.config.scheduler)
         self._stop = threading.Event()
         self._started = False
         self._next_run: dict[str, float] = {}
         self._schedule_lock = threading.RLock()
-        # There must be exactly one autonomous scheduler per running system.
-        # When an external cycle handler is supplied (the production composition
-        # root does this), that handler owns the autonomous cycle. Otherwise the
-        # runtime-native autonomy handler is the standalone default.
-        if self.config.enable_autonomy and self.cycle_handler is None:
-            self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
+
+        if self.config.enable_autonomy:
+            if self.factory is not None and self.cycle_handler is not None:
+                self.schedule_system_cycle("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
+            elif self.cycle_handler is None:
+                self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
     @property
     def store(self):
@@ -184,7 +194,8 @@ class AurelixSystem:
             "store": "shared",
             "scheduler": "shared-runtime",
             "governor": "canonical-submission-boundary",
-            "fabric": "structured-topic-router",
+            "fabric": "shared-composition-fabric" if self.factory is not None else "structured-topic-router",
+            "composition": "engine-factory" if self.factory is not None else "standalone",
             "mission": {"id": self.mission.mission_id, "state": self.mission.state.value, "objective": self.mission.objective},
             "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled",
             "system_cycle": "registered" if "system.cycle" in self.runtime.handlers else "disabled",

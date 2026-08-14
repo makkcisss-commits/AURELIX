@@ -1,5 +1,6 @@
 import pytest
 
+from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
 from aurelix_runtime.message_fabric import AgentMessage, MessageFabric
 from aurelix_runtime.mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission, MissionState
 from aurelix_runtime.runtime import RuntimeConfig
@@ -48,3 +49,26 @@ def test_system_has_one_ordered_autonomous_economic_loop(tmp_path):
         assert rows
     finally:
         system.close()
+
+
+def test_factory_backed_system_uses_the_canonical_cycle_and_shared_fabric(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(
+        runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")),
+        register_autonomy=True,
+    ))
+    system = AurelixSystem(SystemConfig(
+        runtime=RuntimeConfig(database_path=str(tmp_path / "unused.db")),
+        enable_autonomy=True,
+        economic_cycle_seconds=900,
+    ), factory=factory)
+    try:
+        health = system.health()
+        assert health["composition"] == "engine-factory"
+        assert health["fabric"] == "shared-composition-fabric"
+        assert "economic-discovery" in health["schedules"]
+        assert "system.cycle" in factory.runtime.handlers
+        assert system.fabric is factory.message_fabric
+        assert system.governor is factory.governor
+    finally:
+        system.close()
+        factory.runtime.close()

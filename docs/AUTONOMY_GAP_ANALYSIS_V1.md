@@ -1,65 +1,24 @@
-# AURELIX Autonomy Gap Analysis V1
+# AURELIX Autonomy Gap Analysis V1 — historique
 
-## Can AURELIX currently run itself end-to-end?
+> Ce document est une photographie historique de l'audit initial. Il n'est plus la source de vérité sur l'état courant du système. Voir `docs/SYSTEM_CLOSURE_CONTRACT_V1.md` et `docs/SYSTEM_INTEGRATION_AUDIT_V1.md` pour l'état actuel.
 
-**No.** The repository has strong core boundaries and several engines, but it is not yet a self-running production system.
+## État historique
 
-Current capabilities include policy routing, read-only control aggregation, revenue observation, research-source safety, evidence relationships, source intelligence, and an auditable knowledge graph.
+L'analyse initiale identifiait les couches manquantes pour passer d'un noyau gouverné à une boucle autonome : persistance, scheduler, runtime d'agents, recherche contrôlée, académie, expérimentation, opportunités, exécution bornée, sécurité, observabilité et approbation humaine.
 
-## Missing runtime layers
+## État courant
 
-1. Durable persistence for state and knowledge.
-2. Scheduler/event loop for recurring work.
-3. Agent runtime with explicit tool permissions.
-4. Research provider adapters and controlled retrieval workers.
-5. Academy curriculum and knowledge-maintenance loops.
-6. Experiment registry, evaluation, and rollback.
-7. Opportunity scoring and prioritization.
-8. Build/deployment sandbox with approval gates.
-9. Real authentication, authorization, audit logging, secrets management, and network isolation.
-10. Observability: health, metrics, traces, alerts, and failure recovery.
-11. Human approval queue for capital, production, security, and high-impact decisions.
-12. Web Control Center.
+Une grande partie de ces couches existe maintenant sous forme de squelette testable : runtime durable, scheduler, fabric de messages, composition EngineFactory, AutonomyFabric, EnterpriseLoop, recherche, preuves, connaissance, académie, innovation, expérimentation, évaluation, opportunités, business, revenu, apprentissage économique, diagnostic et contrôle d'accès.
 
-## Target autonomous loop
+## Ce qui reste une responsabilité de déploiement
 
-```text
-SCHEDULER
-   ↓
-GOVERNOR
-   ↓
-RESEARCH
-   ↓
-EVIDENCE / VERIFICATION
-   ↓
-ACADEMY MEMORY
-   ↓
-KNOWLEDGE GAP DETECTION
-   ↓
-INNOVATION / OPPORTUNITY
-   ↓
-EXPERIMENT
-   ↓
-EVALUATION
-   ├── FAIL → LEARNING → ACADEMY
-   └── PASS → GOVERNOR
-                  ↓
-          OWNER APPROVAL when required
-                  ↓
-               BUILD
-                  ↓
-              BUSINESS
-                  ↓
-              REVENUE
-                  ↓
-              LEARNING
-                  ↺
-```
+- fournisseurs réels et leurs secrets ;
+- identité et MFA de production ;
+- paiements et comptes financiers ;
+- contrats commerciaux et prospects réels ;
+- réseau, HTTPS et secrets externes ;
+- monitoring et astreinte ;
+- protection de `main` et règles GitHub ;
+- validation de résultats économiques authentiques.
 
-## Autonomy rule
-
-AURELIX may autonomously research, organize knowledge, identify gaps, propose experiments, evaluate outcomes, and prepare recommendations. It may not autonomously spend capital, change production-critical controls, deploy sensitive changes, or alter its own security/governance rules.
-
-## Definition of done for autonomous V1
-
-The system should survive restarts, preserve provenance, recover failed jobs, prevent unauthorized tool use, expose an auditable approval queue, and demonstrate the complete loop in a sandbox before any production autonomy is enabled.
+Le système peut être considéré comme un **squelette opérationnel gouverné**, mais il ne doit jamais être déclaré comme générateur de revenus réels tant qu'une observation financière authentique n'est pas enregistrée.
