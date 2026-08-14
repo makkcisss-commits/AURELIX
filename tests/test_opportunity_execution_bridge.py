@@ -62,7 +62,7 @@ def test_approved_opportunity_runs_through_governor_runtime_and_revenue():
         channel="digital_service",
         permission=permission_for(opportunity.opportunity_id),
         qualification=qualification_for(opportunity),
-        operation=lambda: {"status": "completed", "revenue_eur": "25.00"},
+        operation=lambda: {"status": "completed", "revenue_eur": "25.00", "external_reference": "payment-provider-event-001"},
     )
 
     assert result.route is GovernorRoute.POLICY_ALLOWED
