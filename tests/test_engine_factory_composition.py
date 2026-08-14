@@ -89,3 +89,13 @@ def test_enterprise_cycle_automatically_passes_verified_economic_context(tmp_pat
         }
     finally:
         factory.runtime.close()
+
+
+def test_system_orchestrator_uses_factory_owned_academy_and_intelligence(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=False))
+    try:
+        assert factory.system_orchestrator.intelligence is factory.continuous_intelligence
+        assert factory.system_orchestrator.curated_academy is factory.curated_academy
+        assert factory.system_orchestrator.academy_bridge.intelligence is factory.continuous_intelligence
+    finally:
+        factory.runtime.close()
