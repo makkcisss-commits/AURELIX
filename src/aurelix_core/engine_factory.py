@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .academy import AcademyEngine as CuratedAcademy
 from .academy_agent import AcademyAgent
 from .adaptive_loop import AdaptiveLoop
 from .capability_escalation import CapabilityEscalator
@@ -69,6 +70,10 @@ class EngineFactory:
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
         self.academy_agent = AcademyAgent(self.academy)
+        # The curated Academy is also composition-owned. SystemOrchestrator must
+        # never create a private Academy instance because that would split the
+        # learning state from the rest of the enterprise.
+        self.curated_academy = CuratedAcademy()
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
         self.experiment = ExperimentEngine()
