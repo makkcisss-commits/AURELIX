@@ -5,10 +5,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from decimal import Decimal
 from typing import Any, Mapping
 
-from .academy import AcademyEngine as CuratedAcademy
 from .academy_governor_boundary import AcademyGovernorBoundary, AcademyProposal
 from .academy_intelligence_bridge import AcademyIntelligenceBridge
-from .continuous_intelligence import ContinuousIntelligence
 from .economic_attribution import EconomicAttribution, EconomicAttributionLedger
 from .governor import Governor
 from .learning import LearningEngine, Outcome
@@ -31,8 +29,11 @@ class SystemOrchestrator:
 
     def __init__(self, factory) -> None:
         self.factory = factory
-        self.intelligence = ContinuousIntelligence()
-        self.curated_academy = CuratedAcademy()
+        # These are composition-owned dependencies. Creating a second
+        # ContinuousIntelligence or Academy here would split state and make
+        # the enterprise appear integrated while actually learning in silos.
+        self.intelligence = factory.continuous_intelligence
+        self.curated_academy = factory.curated_academy
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
         self.economic_ledger = EconomicAttributionLedger()
