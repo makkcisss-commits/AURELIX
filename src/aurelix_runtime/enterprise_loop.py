@@ -78,7 +78,6 @@ class EnterpriseLoop:
         # Proposal and execution are separate durable phases. The context is
         # persisted before queueing so a later worker can resume the exact cycle.
         if experiment.get("experiment_id") and self.experiment_submitter is not None:
-            from .integrated_engines import Experiment
             experiment_record = self.store.experiments.get(experiment["experiment_id"])
             if experiment_record is None:
                 raise RuntimeError("experiment proposal was not persisted in the canonical engine store")
@@ -116,7 +115,12 @@ class EnterpriseLoop:
         return EnterpriseCycle(objective, research, academy, knowledge, innovation, experiment, evaluation, opportunity, business)
 
     def continue_after_experiment(self, experiment_id: str) -> dict[str, Any]:
-        """Resume the durable enterprise cycle after real experiment completion."""
+        """Resume the durable enterprise cycle after real experiment completion.
+
+        The continuation is itself idempotent. A worker retry after a successful
+        continuation returns the durable final state instead of re-running the
+        downstream business boundary.
+        """
         experiment = self.store.experiments.get(experiment_id)
         if experiment is None:
             raise KeyError(f"experiment not found: {experiment_id}")
@@ -124,6 +128,9 @@ class EnterpriseLoop:
             return {"status": "awaiting_measurement", "experiment_id": experiment_id}
 
         context = self._load_experiment_context(experiment_id)
+        if context.get("completed") and context.get("final_result"):
+            return dict(context["final_result"])
+
         objective = str(context.get("objective", "")).strip()
         if not objective:
             raise RuntimeError("experiment continuation context is missing objective")
@@ -140,6 +147,14 @@ class EnterpriseLoop:
         )
         business = self.business.run(opportunity, approved=approved)
         status = business.get("status") or opportunity.get("status") or evaluation.get("reason", "completed")
+        final_result = {
+            "status": status,
+            "experiment_id": experiment_id,
+            "objective": objective,
+            "evaluation": evaluation,
+            "opportunity": opportunity,
+            "business": business,
+        }
         self.store.record(
             "enterprise.cycle.resumed",
             objective=objective,
@@ -148,13 +163,6 @@ class EnterpriseLoop:
         )
         self.store._write_state(
             f"experiment.context:{experiment_id}",
-            {**context, "completed": True, "final_status": status},
+            {**context, "completed": True, "final_status": status, "final_result": final_result},
         )
-        return {
-            "status": status,
-            "experiment_id": experiment_id,
-            "objective": objective,
-            "evaluation": evaluation,
-            "opportunity": opportunity,
-            "business": business,
-        }
+        return final_result
