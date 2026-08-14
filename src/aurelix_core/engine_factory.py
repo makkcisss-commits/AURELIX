@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .academy_agent import AcademyAgent
+from .adaptive_loop import AdaptiveLoop
 from .capability_escalation import CapabilityEscalator
 from .continuous_intelligence import ContinuousIntelligence
 from .development_providers import DevelopmentModelProvider, development_research_provider
@@ -65,6 +66,7 @@ class EngineFactory:
         self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.continuous_intelligence = ContinuousIntelligence()
         self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
+        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
@@ -105,6 +107,7 @@ class EngineFactory:
                 business=self.business,
                 message_fabric=self.message_fabric,
                 capability_escalator=self.capability_escalator,
+                adaptive_loop=self.adaptive_loop,
             )
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         self.experiment_runner = self.runtime.create_experiment_runner()
