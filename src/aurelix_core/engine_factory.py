@@ -97,6 +97,14 @@ class EngineFactory:
             opportunity=self.opportunity,
             business=self.business,
         )
+
+        configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
+        self.experiment_executor = configured_executor
+        # Create exactly one runner at the composition root. Runtime and
+        # AutonomyFabric must use this same instance so observations,
+        # evaluation and durable execution cannot diverge into separate state.
+        self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
+
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
         if self.config.register_autonomy:
@@ -114,11 +122,9 @@ class EngineFactory:
                 message_fabric=self.message_fabric,
                 capability_escalator=self.capability_escalator,
                 adaptive_loop=self.adaptive_loop,
+                experiment_runner=self.experiment_runner,
             )
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
-        configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
-        self.experiment_executor = configured_executor
-        self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
         if configured_executor is not None:
             self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner)
         self.core_evaluation = CoreEvaluationEngine()
