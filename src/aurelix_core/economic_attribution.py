@@ -28,7 +28,7 @@ class EconomicAttribution:
 
 
 class EconomicAttributionLedger:
-    """Stores immutable economic observations with execution provenance."""
+    """Stores verified economic observations with execution provenance."""
 
     def __init__(self) -> None:
         self._entries: dict[str, EconomicAttribution] = {}
@@ -56,7 +56,6 @@ class EconomicAttributionLedger:
         if not governor_decision_id:
             raise ValueError("governor_decision_id is required for attribution")
         key = external_reference or f"{opportunity_id}:{source_id}"
-        existing = self._entries.get(key)
         entry = EconomicAttribution(
             opportunity_id=opportunity_id,
             source_id=source_id,
@@ -68,6 +67,7 @@ class EconomicAttributionLedger:
             verified=True,
             external_reference=external_reference,
         )
+        existing = self._entries.get(key)
         if existing is not None and existing == entry:
             return existing
         self._entries[key] = entry
