@@ -22,3 +22,27 @@ def test_self_improvement_is_composed_and_closed_loop(tmp_path):
         assert prepared["plan"]["id"]
     finally:
         factory.runtime.close()
+
+
+def test_enterprise_cycle_automatically_passes_verified_economic_context(tmp_path, monkeypatch):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=False))
+    try:
+        feedback = {"verified_revenue_eur": 125.0, "verified_outcomes": 2}
+        calls = {}
+
+        monkeypatch.setattr(factory, "economic_learning_context", lambda: feedback)
+
+        def run(objective, *, approved=False, economic_feedback=None):
+            calls.update(objective=objective, approved=approved, economic_feedback=economic_feedback)
+            return "cycle"
+
+        monkeypatch.setattr(factory.enterprise, "run", run)
+
+        assert factory.run_enterprise_cycle("find qualified B2B opportunities", approved=True) == "cycle"
+        assert calls == {
+            "objective": "find qualified B2B opportunities",
+            "approved": True,
+            "economic_feedback": feedback,
+        }
+    finally:
+        factory.runtime.close()
