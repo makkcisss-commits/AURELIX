@@ -79,19 +79,18 @@ class EngineStore:
             )
 
     def _load(self) -> None:
+        data = self._read_state("engine.knowledge") or {}
+        self.knowledge = {
+            item_id: KnowledgeItem(
+                id=item["id"], title=item["title"], content=item["content"],
+                evidence=[Evidence(**e) for e in item.get("evidence", [])],
+                tags=item.get("tags", []), created_at=item.get("created_at", now()),
+            ) for item_id, item in data.items()
+        }
         if self.knowledge_repository is not None:
             from .knowledge_store import KnowledgeQuery
             for item in self.knowledge_repository.search(KnowledgeQuery("", limit=500)):
                 self.knowledge[item.id] = item
-        else:
-            data = self._read_state("engine.knowledge") or {}
-            self.knowledge = {
-                item_id: KnowledgeItem(
-                    id=item["id"], title=item["title"], content=item["content"],
-                    evidence=[Evidence(**e) for e in item.get("evidence", [])],
-                    tags=item.get("tags", []), created_at=item.get("created_at", now()),
-                ) for item_id, item in data.items()
-            }
         data = self._read_state("engine.experiments") or {}
         self.experiments = {k: Experiment(**v) for k, v in data.items()}
         data = self._read_state("engine.opportunities") or {}
@@ -99,12 +98,11 @@ class EngineStore:
         self.audit = self._read_state("engine.audit") or []
 
     def _persist(self) -> None:
-        if self.knowledge_repository is None:
-            self._write_state(
-                "engine.knowledge",
-                {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()},
-            )
-        else:
+        self._write_state(
+            "engine.knowledge",
+            {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()},
+        )
+        if self.knowledge_repository is not None:
             for item in self.knowledge.values():
                 self.knowledge_repository.put(item)
         self._write_state("engine.experiments", {k: asdict(v) for k, v in self.experiments.items()})
