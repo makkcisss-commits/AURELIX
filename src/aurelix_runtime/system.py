@@ -93,6 +93,16 @@ class AurelixSystem:
     def schedule_system_cycle(self, name: str, interval_seconds: float, objective: str) -> None:
         if self.cycle_handler is None:
             raise RuntimeError("system cycle handler is not configured")
+        # There is one canonical enterprise cycle. Replacing its schedule is
+        # intentional: API startup may provide a deployment-specific objective
+        # and interval, and must not create a second economic loop.
+        with self._schedule_lock:
+            self.scheduler.schedules[:] = [s for s in self.scheduler.schedules if s.job_kind != "system.cycle"]
+            self._next_run = {
+                schedule_name: next_run
+                for schedule_name, next_run in self._next_run.items()
+                if any(s.name == schedule_name for s in self.scheduler.schedules)
+            }
         self._schedule(name, interval_seconds, "system.cycle", objective)
 
     def _schedule(self, name: str, interval_seconds: float, job_kind: str, objective: str) -> None:
