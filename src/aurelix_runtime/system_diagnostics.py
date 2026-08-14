@@ -29,6 +29,7 @@ class SystemDiagnostics:
         checks: list[DiagnosticCheck] = [
             self._check("runtime", self._runtime),
             self._check("canonical_composition", self._canonical_composition),
+            self._check("experiment_execution", self._experiment_execution),
             self._check("economic_feedback", self._economic_feedback),
             self._check("live_opportunity_readiness", self._live_opportunity_readiness),
             self._check("model_provider", lambda: self._provider("model_provider")),
@@ -81,6 +82,22 @@ class SystemDiagnostics:
             return DiagnosticCheck("canonical_composition", "failed", "high", "multiple composition instances detected", shared_engines)
         return DiagnosticCheck("canonical_composition", "ok", "info", "runtime autonomy and enterprise loop share one composition", shared_engines)
 
+    def _experiment_execution(self) -> DiagnosticCheck:
+        executor = getattr(self.factory, "experiment_executor", None)
+        runner = getattr(self.factory, "experiment_runner", None)
+        submitter = getattr(getattr(self.factory, "enterprise", None), "experiment_submitter", None)
+        if executor is None or runner is None or submitter is None:
+            return DiagnosticCheck(
+                "experiment_execution", "failed", "high",
+                "durable experiment execution is not mounted; experiments must not be evaluated as if executed",
+                {"executor": executor is not None, "runner": runner is not None, "submitter": submitter is not None},
+            )
+        return DiagnosticCheck(
+            "experiment_execution", "ok", "info",
+            "experiment proposals are mounted onto the durable runtime execution path",
+            {"executor": type(executor).__name__, "runner": type(runner).__name__, "durable_job_kind": "experiment.run"},
+        )
+
     def _economic_feedback(self) -> DiagnosticCheck:
         context = self.factory.economic_learning_context()
         required = {"productive_sources", "average_realization_ratio", "daily_realized_eur", "daily_expected_eur", "verified_financial_outcome"}
@@ -96,26 +113,13 @@ class SystemDiagnostics:
         })
 
     def _live_opportunity_readiness(self) -> DiagnosticCheck:
-        """Never confuse deterministic development evidence with real market evidence."""
         mode = __import__("os").environ.get("AURELIX_MODE", "production").strip().lower()
         provider = getattr(self.factory, "research_provider", None)
         if mode == "development":
-            return DiagnosticCheck(
-                "live_opportunity_readiness", "degraded", "medium",
-                "development mode uses synthetic evidence; live opportunity discovery is not enabled",
-                {"mode": mode, "provider": type(provider).__name__ if provider else None, "real_evidence": False},
-            )
+            return DiagnosticCheck("live_opportunity_readiness", "degraded", "medium", "development mode uses synthetic evidence; live opportunity discovery is not enabled", {"mode": mode, "provider": type(provider).__name__ if provider else None, "real_evidence": False})
         if provider is None:
-            return DiagnosticCheck(
-                "live_opportunity_readiness", "failed", "high",
-                "no live research provider is configured; real opportunity discovery cannot run",
-                {"mode": mode, "real_evidence": False},
-            )
-        return DiagnosticCheck(
-            "live_opportunity_readiness", "ok", "info",
-            "live research provider is configured; evidence still requires qualification before economic execution",
-            {"mode": mode, "provider": type(provider).__name__, "real_evidence": True},
-        )
+            return DiagnosticCheck("live_opportunity_readiness", "failed", "high", "no live research provider is configured; real opportunity discovery cannot run", {"mode": mode, "real_evidence": False})
+        return DiagnosticCheck("live_opportunity_readiness", "ok", "info", "live research provider is configured; evidence still requires qualification before economic execution", {"mode": mode, "provider": type(provider).__name__, "real_evidence": True})
 
     def _provider(self, attr: str) -> DiagnosticCheck:
         provider = getattr(self.factory, attr)
