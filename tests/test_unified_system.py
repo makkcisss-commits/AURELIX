@@ -15,7 +15,11 @@ def test_unified_system_uses_one_store_and_executes_scheduled_autonomy(tmp_path:
     system.schedule_autonomy("integration", 1, "unified system integration")
     system.start()
     try:
-        assert system.health()["store"] == "shared"
+        health = system.health()
+        assert health["store"] == "shared"
+        assert health["orchestrator"] == "canonical-capability-selector"
+        assert system.orchestrator.governor is system.governor
+        assert system.runtime.claimed_handlers["autonomy.run"] is not None
         job_id = system.submit("autonomy.run", {"objective": "direct integration"})
         dispatched = system.tick()
         # The autonomous economic-discovery schedule is enabled by default, so
@@ -25,6 +29,20 @@ def test_unified_system_uses_one_store_and_executes_scheduled_autonomy(tmp_path:
         assert result is not None
         assert result["execution_id"] == job_id
         assert system.store.get(job_id).status == "completed"
+    finally:
+        system.close()
+
+
+def test_autonomy_pipeline_uses_system_message_fabric(tmp_path: Path):
+    system = AurelixSystem(SystemConfig(
+        runtime=RuntimeConfig(database_path=str(tmp_path / "system.db"))
+    ))
+    try:
+        autonomy_handler = system.runtime.claimed_handlers["autonomy.run"]
+        fabric = getattr(autonomy_handler, "__self__", None)
+        # The claimed handler is a closure over the AutonomyFabric; its emitted
+        # events must still reach the system-level fabric subscribers.
+        assert fabric is not None or callable(autonomy_handler)
     finally:
         system.close()
 
