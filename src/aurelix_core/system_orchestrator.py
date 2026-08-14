@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, Mapping
 
 from .academy import AcademyEngine as CuratedAcademy
 from .academy_governor_boundary import AcademyGovernorBoundary, AcademyProposal
@@ -52,7 +52,7 @@ class SystemOrchestrator:
             raise ValueError("objective is required")
 
         enterprise = self.factory.run_enterprise_cycle(objective, approved=False)
-        enterprise_dict = asdict(enterprise) if is_dataclass(enterprise) else dict(enterprise.__dict__)
+        enterprise_dict = self._as_mapping(enterprise)
         academy_payload = enterprise_dict["academy"]
         knowledge_payload = enterprise_dict["knowledge"]
 
@@ -61,7 +61,7 @@ class SystemOrchestrator:
         economic = self._emit_economic_learning()
         diagnostics = self._diagnostics()
 
-        status = "attention" if governance.get("route") == "BLOCKED" else enterprise.status
+        status = "attention" if governance.get("route") == "BLOCKED" else enterprise_dict["status"]
         result = SystemCycleResult(
             objective=objective,
             status=status,
@@ -79,6 +79,17 @@ class SystemOrchestrator:
             {"governance_route": governance.get("route"), "new_learning": economic["new_signals"]},
         )
         return result
+
+    @staticmethod
+    def _as_mapping(value: Any) -> dict[str, Any]:
+        """Normalize the canonical cycle result without coupling to test doubles."""
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, Mapping):
+            return dict(value)
+        if hasattr(value, "__dict__"):
+            return dict(vars(value))
+        raise TypeError(f"enterprise cycle result must be mapping-like, got {type(value).__name__}")
 
     def record_verified_economic_outcome(
         self,
