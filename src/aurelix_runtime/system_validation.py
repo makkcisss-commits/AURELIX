@@ -28,6 +28,8 @@ class SystemValidation:
             "runtime": self._runtime,
             "engine_factory": self._factory,
             "canonical_composition": self._composition,
+            "shared_intelligence": self._shared_intelligence,
+            "experiment_execution": self._experiment_execution,
             "economic_feedback": self._economic_feedback,
             "knowledge_store": self._knowledge,
         }
@@ -65,6 +67,30 @@ class SystemValidation:
             "business": fabric.business is self.factory.business,
         }
         return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
+
+    def _shared_intelligence(self) -> dict[str, Any]:
+        orchestrator = getattr(self.factory, "system_orchestrator", None)
+        intelligence = getattr(self.factory, "continuous_intelligence", None)
+        curated_academy = getattr(self.factory, "curated_academy", None)
+        if orchestrator is None or intelligence is None or curated_academy is None:
+            return {"status": "failed", "reason": "shared_intelligence_composition_missing"}
+        shared = {
+            "continuous_intelligence": orchestrator.intelligence is intelligence,
+            "curated_academy": orchestrator.curated_academy is curated_academy,
+            "academy_bridge": orchestrator.academy_bridge.intelligence is intelligence,
+        }
+        return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
+
+    def _experiment_execution(self) -> dict[str, Any]:
+        runtime = self.factory.runtime
+        runner = getattr(self.factory, "experiment_runner", None)
+        executor = getattr(self.factory, "experiment_executor", None)
+        registered = "experiment.run" in runtime.handlers or "experiment.run" in runtime.claimed_handlers
+        # Production must fail closed when no real measurement source is supplied.
+        # This is a degraded capability, never a synthetic success.
+        if executor is None:
+            return {"status": "degraded", "reason": "no_real_experiment_executor", "runner_present": runner is not None, "job_registered": registered}
+        return {"status": "ok" if runner is not None and registered else "failed", "runner_present": runner is not None, "job_registered": registered, "executor_configured": True}
 
     def _economic_feedback(self) -> dict[str, Any]:
         context = self.factory.economic_learning_context()
