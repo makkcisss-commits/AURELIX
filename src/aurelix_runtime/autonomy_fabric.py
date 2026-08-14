@@ -7,6 +7,7 @@ import threading
 from typing import Any
 from uuid import uuid4
 
+from aurelix_core.adaptive_loop import AdaptiveLoop
 from aurelix_core.capability_escalation import CapabilityEscalator
 from .experiment_runner import ExperimentRunner
 from .integrated_engines import (
@@ -60,7 +61,8 @@ class AutonomyFabric:
                  experiment: ExperimentEngine | None = None, evaluation: EvaluationEngine | None = None,
                  opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None,
                  message_fabric: MessageFabric | None = None,
-                 capability_escalator: CapabilityEscalator | None = None) -> None:
+                 capability_escalator: CapabilityEscalator | None = None,
+                 adaptive_loop: AdaptiveLoop | None = None) -> None:
         self.store = store or RuntimeStore()
         self.message_fabric = message_fabric or MessageFabric()
         self.knowledge_repository = SQLiteKnowledgeRepository(self.store)
@@ -75,6 +77,7 @@ class AutonomyFabric:
         self.opportunity = opportunity or OpportunityEngine()
         self.business = business or BusinessEngine(require_approval=True)
         self.capability_escalator = capability_escalator
+        self.adaptive_loop = adaptive_loop
         self.experiment_runner = ExperimentRunner(collector=self._collect_observations, on_complete=self._persist_experiment)
 
     def _emit(self, topic: str, sender: str, execution_id: str, payload: dict[str, Any], *, causation_id: str | None = None) -> None:
@@ -118,11 +121,22 @@ class AutonomyFabric:
             academy = {"status": "blocked", "capability_gaps": unknown}
         else:
             for capability in unknown:
-                gap, objective = self.capability_escalator.escalate(
-                    capability=capability,
-                    reason="required capability is not validated by the runtime",
-                    requested_by=claimed.worker_id or "autonomy",
-                )
+                if self.adaptive_loop is not None:
+                    _, objective = self.adaptive_loop.block_for_capability(
+                        claimed.job_id, capability,
+                        reason="required capability is not validated by the runtime",
+                        requested_by=claimed.worker_id or "autonomy",
+                    )
+                    gap = self.capability_escalator.gaps[next(
+                        gap_id for gap_id, item in self.capability_escalator.gaps.items()
+                        if item.study_objective_id == objective.objective_id
+                    )]
+                else:
+                    gap, objective = self.capability_escalator.escalate(
+                        capability=capability,
+                        reason="required capability is not validated by the runtime",
+                        requested_by=claimed.worker_id or "autonomy",
+                    )
                 gaps.append({"gap_id": gap.gap_id, "capability": gap.capability, "study_objective_id": objective.objective_id})
                 self.store.record_audit(claimed.job_id, "autonomy.capability_escalated", gaps[-1])
             status = "capability_learning_required"
@@ -147,15 +161,17 @@ class AutonomyFabric:
         """Execute an already-claimed job without creating a second lifecycle."""
         if claimed.status != "running" or not claimed.worker_id or not claimed.lease_token:
             raise RuntimeError(f"execution is not actively owned: {claimed.job_id}")
-        required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
-        if required_capabilities:
-            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
-            if unknown:
-                return self._capability_learning_result(claimed, required_capabilities)
         execution_id = claimed.job_id
         objective = str(claimed.payload.get("objective", "")).strip()
         if not objective:
             raise ValueError("research objective is required")
+        required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
+        if self.adaptive_loop is not None:
+            self.adaptive_loop.register_mission(execution_id, objective, required_capabilities)
+        if required_capabilities:
+            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
+            if unknown:
+                return self._capability_learning_result(claimed, required_capabilities)
 
         mission = EconomicMission(objective, source="autonomy", constraints={"execution_id": execution_id})
         mission.plan(list(DEFAULT_ECONOMIC_TASKS))
