@@ -19,6 +19,7 @@ from .continuous_intelligence import (
 @dataclass(frozen=True)
 class AcademyKnowledgeProjection:
     knowledge_id: str
+    objective_id: str
     evidence_ids: tuple[str, ...]
     domain: str
 
@@ -41,22 +42,28 @@ class AcademyIntelligenceBridge:
             raise ValueError("domain is required")
         if knowledge.knowledge_id in self._projections:
             projection = self._projections[knowledge.knowledge_id]
-            return self.intelligence.knowledge[knowledge.knowledge_id], projection
+            return self.intelligence.knowledge[projection.knowledge_id], projection
 
         self.intelligence.discover_domain(domain)
-        evidence_ids: list[str] = []
+        objective = self.intelligence.propose_objective(
+            domain=domain,
+            title=f"Academy knowledge: {knowledge.title}",
+            question=knowledge.summary,
+            priority=knowledge.confidence,
+        )
         references = knowledge.source_refs or knowledge.learning_refs
+        if not references:
+            raise ValueError("Academy knowledge requires provenance")
+
+        evidence_ids: list[str] = []
         for reference in references:
             evidence = self.intelligence.record_evidence(
-                objective_id=self._ensure_objective(domain, knowledge),
+                objective_id=objective.objective_id,
                 kind=evidence_kind,
                 reference=reference,
                 strength=knowledge.confidence,
             )
             evidence_ids.append(evidence.evidence_id)
-
-        if not evidence_ids:
-            raise ValueError("Academy knowledge requires provenance")
 
         item = self.intelligence.record_knowledge(
             domain=domain,
@@ -65,17 +72,8 @@ class AcademyIntelligenceBridge:
             confidence=knowledge.confidence,
             state=KnowledgeState.VALIDATED if knowledge.confidence >= 0.7 else KnowledgeState.CANDIDATE,
         )
-        # Preserve Academy identity through the evidence references and projection map.
-        projection = AcademyKnowledgeProjection(item.knowledge_id, tuple(evidence_ids), domain)
+        projection = AcademyKnowledgeProjection(
+            item.knowledge_id, objective.objective_id, tuple(evidence_ids), domain
+        )
         self._projections[knowledge.knowledge_id] = projection
         return item, projection
-
-    def _ensure_objective(self, domain: str, knowledge: Knowledge) -> str:
-        title = f"Academy knowledge: {knowledge.title}"
-        objective = self.intelligence.propose_objective(
-            domain=domain,
-            title=title,
-            question=knowledge.summary,
-            priority=knowledge.confidence,
-        )
-        return objective.objective_id
