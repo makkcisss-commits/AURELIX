@@ -6,6 +6,7 @@ from typing import Callable, Any
 from aurelix_core.governor import Governor, GovernorRoute
 
 from .job_queue import PersistentJobQueue, QueuedJob
+from .message_fabric import AgentMessage, MessageFabric
 from .runtime import AurelixRuntime
 
 
@@ -20,12 +21,13 @@ class Orchestrator:
     """Selects capabilities and submits work through the canonical durable runtime."""
 
     def __init__(self, queue: PersistentJobQueue | None = None, governor: Governor | None = None,
-                 runtime: AurelixRuntime | None = None) -> None:
+                 runtime: AurelixRuntime | None = None, message_fabric: MessageFabric | None = None) -> None:
         if queue is None and runtime is None:
             raise ValueError("queue or runtime is required")
         self.queue = queue
         self.runtime = runtime
         self.governor = governor or Governor()
+        self.message_fabric = message_fabric
         self._capabilities: dict[str, Capability] = {}
 
     def register(self, capability: Capability) -> None:
@@ -37,7 +39,7 @@ class Orchestrator:
 
     def submit(self, *, capability: str, payload: dict, risk: int = 0,
                requires_capital: bool = False, production_change: bool = False) -> str:
-        """Route a capability through Governor, then place it in the durable runtime."""
+        """Apply the single Governor decision, then place the selected capability in durable execution."""
         runtime_has_capability = self.runtime is not None and (
             capability in self.runtime.handlers or capability in self.runtime.claimed_handlers
         )
@@ -48,7 +50,22 @@ class Orchestrator:
             requires_capital=requires_capital, risk=risk,
             production_change=production_change,
         )
+        if self.message_fabric is not None:
+            self.message_fabric.publish(AgentMessage(
+                topic="governor.decision",
+                sender="governor",
+                recipient="orchestrator",
+                payload={"action": capability, "outcome": route.route.value, "request_id": route.request_id},
+                policy_context={"risk": risk, "requires_capital": requires_capital, "production_change": production_change},
+            ))
         if route.route is not GovernorRoute.POLICY_ALLOWED:
+            if self.runtime is not None:
+                self.runtime.store.record_audit(
+                    None,
+                    "orchestrator.submission_blocked",
+                    {"actor": "governor", "subject": capability, "outcome": route.route.value,
+                     "request_id": route.request_id, "reasons": list(route.reasons)},
+                )
             raise PermissionError(route.reasons)
         if self.runtime is not None:
             return self.runtime.submit(capability, payload)
