@@ -32,6 +32,9 @@ services:
       AURELIX_RESEARCH_PROVIDER: tavily
       AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:?set AURELIX_RESEARCH_API_KEY}
       AURELIX_DATABASE_URL: postgresql://aurelix:${POSTGRES_PASSWORD}@postgres:5432/aurelix
+      AURELIX_AUTONOMY_ENABLED: ${AURELIX_AUTONOMY_ENABLED:-true}
+      AURELIX_AUTONOMY_INTERVAL_SECONDS: ${AURELIX_AUTONOMY_INTERVAL_SECONDS:-900}
+      AURELIX_AUTONOMY_OBJECTIVE: ${AURELIX_AUTONOMY_OBJECTIVE:-Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.}
     volumes:
       # RuntimeStore uses the local SQLite database for durable jobs, audit and
       # experiment state. Keep it on a named volume so container recreation does
