@@ -56,8 +56,7 @@ class RuntimeStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
                 CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_until);
                 CREATE INDEX IF NOT EXISTS idx_observations_experiment ON observations(experiment_id, recorded_at);
-                CREATE VIEW IF NOT EXISTS audit_log AS
-                    SELECT event_id, job_id, event_type, payload, created_at FROM audit_events;
+                CREATE VIEW IF NOT EXISTS audit_log AS SELECT event_id, job_id, event_type, payload, created_at FROM audit_events;
             """)
             self._migrate_jobs_schema()
 
@@ -178,6 +177,7 @@ class RuntimeStore:
             if not retry: self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
 
     def record_result(self, job_id: str, result: dict, worker_id: str | None = None, lease_token: str | None = None) -> None:
+        """Persist an intermediate result only while the current lease is valid."""
         now_dt = datetime.now(timezone.utc); now = now_dt.isoformat()
         with self.lock, self.db:
             row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -227,13 +227,29 @@ class RuntimeStore:
                             if datetime.fromisoformat(row["heartbeat_at"]) > cutoff and not lease_expired: continue
                         except ValueError: pass
                     if not force and not lease_expired: continue
-                    status = "queued" if row["attempts"] < max_attempts else "failed"
-                    self.db.execute("UPDATE jobs SET status=?, updated_at=?, worker_id=NULL, lease_token=NULL, lease_until=NULL WHERE job_id=?", (status, now, row["job_id"]))
+                    durable = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (row["job_id"],)).fetchone()
+                    if durable is not None:
+                        self.db.execute("UPDATE jobs SET status='completed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=NULL WHERE job_id=? AND status='running'", (now, row["job_id"])); recovered += 1; continue
+                    final_status = "failed" if row["attempts"] >= max_attempts else "queued"
+                    error = "interrupted after maximum attempts" if final_status == "failed" else "interrupted; queued for recovery"
+                    if self._supports_interrupted:
+                        self.db.execute("UPDATE jobs SET status='interrupted', updated_at=?, last_error=? WHERE job_id=? AND status='running'", (now, error, row["job_id"]))
+                        self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='interrupted'", (final_status, now, error, row["job_id"]))
+                    else:
+                        self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running'", (final_status, now, error, row["job_id"]))
+                    if final_status == "failed": self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (row["job_id"], json.dumps({"ok": False, "error": error}, sort_keys=True), now))
                     recovered += 1
                 self.db.commit(); return recovered
             except Exception:
                 self.db.rollback(); raise
 
-    def close(self) -> None:
+    def recover_running(self) -> int:
+        return self.recover_running_jobs()
+
+    def status(self) -> dict[str, int | str]:
         with self.lock:
-            self.db.close()
+            counts = {row[0]: row[1] for row in self.db.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")}; row = self.db.execute("SELECT value FROM runtime_state WHERE key='heartbeat'").fetchone()
+        return {"heartbeat": row[0] if row else "never", "queued": counts.get("queued", 0), "running": counts.get("running", 0), "interrupted": counts.get("interrupted", 0), "succeeded": counts.get("completed", 0), "failed": counts.get("failed", 0)}
+
+    def close(self) -> None:
+        with self.lock: self.db.close()
