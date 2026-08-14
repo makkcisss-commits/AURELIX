@@ -1,13 +1,17 @@
 name: AURELIX System Regression
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: system-regression-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   system-regression:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
