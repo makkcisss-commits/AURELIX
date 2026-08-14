@@ -37,17 +37,14 @@ from aurelix_runtime.system_validation import SystemValidation
 
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
 
-
 @dataclass(frozen=True)
 class EngineFactoryConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     register_autonomy: bool = True
     experiment_executor: ExperimentExecutor | None = None
 
-
 class EngineFactory:
     """Canonical engine composition root sharing one durable runtime and knowledge store."""
-
     def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None,
                  model_provider: ModelProvider | None = None, research_provider=None,
                  knowledge: KnowledgeRepository | None = None, repository=None,
@@ -70,9 +67,6 @@ class EngineFactory:
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
         self.academy_agent = AcademyAgent(self.academy)
-        # The curated Academy is also composition-owned. SystemOrchestrator must
-        # never create a private Academy instance because that would split the
-        # learning state from the rest of the enterprise.
         self.curated_academy = CuratedAcademy()
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
@@ -92,7 +86,7 @@ class EngineFactory:
         self.experiment_executor = configured_executor
         self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
         if configured_executor is not None:
-            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner)
+            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner, after_execute=self.enterprise.continue_after_experiment)
             self.enterprise.set_experiment_submitter(self.runtime.submit_experiment)
         if self.autonomy_fabric is not None:
             self.autonomy_fabric.set_experiment_runner(self.experiment_runner)
@@ -104,8 +98,7 @@ class EngineFactory:
         self.system_orchestrator = SystemOrchestrator(self)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
-        if provider is None:
-            return None
+        if provider is None: return None
         def policy(request: GenerationRequest) -> bool:
             decision = self.policy_engine.evaluate(DecisionRequest(actor=Actor(request.actor_id, "engine", AutonomyLevel.A1), action=ActionClass.RESEARCH, reason=request.action, payload={"prompt": request.prompt}))
             return decision.allowed
@@ -117,56 +110,29 @@ class EngineFactory:
     @staticmethod
     def _build_research_provider():
         provider = os.getenv("AURELIX_RESEARCH_PROVIDER", "http").strip().lower()
-        if provider == "tavily":
-            return TavilyResearchProvider.from_env()
+        if provider == "tavily": return TavilyResearchProvider.from_env()
         return HttpResearchProvider.from_env()
 
     def research_and_store(self, query: str):
-        if self.research_to_knowledge is None:
-            raise RuntimeError("no research provider configured")
+        if self.research_to_knowledge is None: raise RuntimeError("no research provider configured")
         return self.research_to_knowledge.research_and_store(query)
 
     def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
         economic_feedback = self.economic_learning_context()
         return self.enterprise.run(objective, approved=approved, economic_feedback=economic_feedback)
 
-    def run_system_cycle(self, objective: str):
-        return self.system_orchestrator.run_cycle(objective)
-
-    def record_verified_economic_outcome(self, **kwargs):
-        return self.system_orchestrator.record_verified_economic_outcome(**kwargs)
-
-    def system_status(self):
-        return self.system_orchestrator.status()
-
-    def diagnose(self):
-        return self.diagnostics.run()
-
-    def validate_system(self):
-        return self.system_validation.run()
-
-    def learn_verified(self, objective: str, evidence):
-        return self.knowledge_learning.learn(objective, evidence)
-
-    def plan_system_change(self, objective: str, scope: list[str] | None = None):
-        return self.system_developer.plan(objective, scope)
-
-    def self_improvement_assess(self):
-        return self.self_improvement.assess()
-
-    def self_improvement_prepare(self, objective: str, scope: list[str] | None = None):
-        return self.self_improvement.prepare(objective, scope)
-
-    def self_improvement_execute(self, plan: dict[str, Any], *, approved: bool = False):
-        return self.self_improvement.execute_and_verify(plan, approved=approved)
-
-    def economic_snapshot(self):
-        return self.economic_feedback.snapshot()
-
-    def economic_learning_context(self):
-        return self.economic_feedback.learning_context()
-
+    def run_system_cycle(self, objective: str): return self.system_orchestrator.run_cycle(objective)
+    def record_verified_economic_outcome(self, **kwargs): return self.system_orchestrator.record_verified_economic_outcome(**kwargs)
+    def system_status(self): return self.system_orchestrator.status()
+    def diagnose(self): return self.diagnostics.run()
+    def validate_system(self): return self.system_validation.run()
+    def learn_verified(self, objective: str, evidence): return self.knowledge_learning.learn(objective, evidence)
+    def plan_system_change(self, objective: str, scope: list[str] | None = None): return self.system_developer.plan(objective, scope)
+    def self_improvement_assess(self): return self.self_improvement.assess()
+    def self_improvement_prepare(self, objective: str, scope: list[str] | None = None): return self.self_improvement.prepare(objective, scope)
+    def self_improvement_execute(self, plan: dict[str, Any], *, approved: bool = False): return self.self_improvement.execute_and_verify(plan, approved=approved)
+    def economic_snapshot(self): return self.economic_feedback.snapshot()
+    def economic_learning_context(self): return self.economic_feedback.learning_context()
     def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
-        if self.model_gateway is None:
-            raise RuntimeError("AURELIX_MODEL_BASE_URL is not configured")
+        if self.model_gateway is None: raise RuntimeError("AURELIX_MODEL_BASE_URL is not configured")
         return self.model_gateway.generate(GenerationRequest(prompt=prompt, action=action, actor_id=actor_id))
