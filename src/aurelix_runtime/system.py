@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from aurelix_core.governor import Governor, GovernorRoute
+from aurelix_core.governor import Governor
 
 from .message_fabric import AgentMessage, MessageFabric
 from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
@@ -37,7 +37,9 @@ class AurelixSystem:
         self._owns_runtime = runtime is None
         self.governor = governor or Governor()
         self.fabric = MessageFabric()
-        self.orchestrator = Orchestrator(runtime=self.runtime, governor=self.governor)
+        self.orchestrator = Orchestrator(
+            runtime=self.runtime, governor=self.governor, message_fabric=self.fabric
+        )
         self.mission = EconomicMission(self.config.economic_objective, source="system")
         self.mission.plan(list(DEFAULT_ECONOMIC_TASKS))
         self.fabric.subscribe("governor.decision", self._record_governor_message)
@@ -101,34 +103,13 @@ class AurelixSystem:
 
     def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
                requires_capital: bool = False, production_change: bool = False) -> str:
-        """Submit work through Governor then Orchestrator, never directly to Runtime."""
-        route = self.governor.route(
-            source="system",
-            action=kind,
-            requires_capital=requires_capital,
-            risk=risk,
-            production_change=production_change,
-        )
-        decision = AgentMessage(
-            topic="governor.decision", sender="governor",
-            payload={"action": kind, "outcome": route.route.value, "request_id": route.request_id},
-            policy_context={"risk": risk, "requires_capital": requires_capital, "production_change": production_change},
-        )
-        self.fabric.publish(decision)
-        if route.route is not GovernorRoute.POLICY_ALLOWED:
-            self.store.record_audit(
-                None,
-                "system.submission_blocked",
-                {"actor": "governor", "subject": kind, "outcome": route.route.value,
-                 "request_id": route.request_id, "reasons": list(route.reasons)},
-            )
-            raise PermissionError(route.reasons)
+        """Submit work through the single Governor → Orchestrator → Runtime path."""
         return self.orchestrator.submit(
             capability=kind,
             payload=payload or {},
-            risk=0,
-            requires_capital=False,
-            production_change=False,
+            risk=risk,
+            requires_capital=requires_capital,
+            production_change=production_change,
         )
 
     def _enqueue_due(self) -> int:
