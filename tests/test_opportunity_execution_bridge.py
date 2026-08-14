@@ -3,11 +3,10 @@ from decimal import Decimal
 
 import pytest
 
-from aurelix_core.execution import ExecutionDenied
 from aurelix_core.governor import GovernorRoute
 from aurelix_core.opportunities import OpportunityStage, build_opportunity
 from aurelix_core.opportunity_execution_bridge import OpportunityExecutionBridge
-from aurelix_core.resource_scope import ResourceKind, ResourcePermission
+from aurelix_core.resource_scope import ResourceKind, ResourcePermission, ScopeDenied
 
 
 def approved_opportunity(*, risk: int = 1):
@@ -79,7 +78,7 @@ def test_governor_blocks_high_risk_before_runtime():
     assert result.observed_revenue_eur == Decimal("0")
 
 
-def test_runtime_scope_still_applies_after_governor_allows():
+def test_resource_scope_still_applies_after_governor_allows():
     opportunity = approved_opportunity()
     bridge = OpportunityExecutionBridge()
     wrong_scope = ResourcePermission(
@@ -89,7 +88,7 @@ def test_runtime_scope_still_applies_after_governor_allows():
         scope="another-opportunity",
     )
 
-    with pytest.raises(ExecutionDenied):
+    with pytest.raises(ScopeDenied):
         bridge.execute(
             opportunity,
             actor_id="operator",
