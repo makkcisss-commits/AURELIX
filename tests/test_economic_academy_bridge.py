@@ -39,6 +39,30 @@ def test_verified_economic_outcomes_publish_as_traceable_academy_knowledge():
     assert academy.get(item.knowledge_id) is item
 
 
+def test_repeated_publication_does_not_duplicate_the_same_evidence():
+    portfolio = Portfolio(Source("op-1", "25", "40"))
+    bridge = EconomicAcademyBridge(
+        AcademyEngine(), EconomicLearningAdapter(EconomicFeedback(portfolio))
+    )
+
+    assert len(bridge.publish()) == 1
+    assert bridge.publish() == []
+
+
+def test_changed_observed_outcome_creates_new_learning_evidence():
+    source = Source("op-1", "25", "40")
+    bridge = EconomicAcademyBridge(
+        AcademyEngine(), EconomicLearningAdapter(EconomicFeedback(Portfolio(source)))
+    )
+
+    assert len(bridge.publish()) == 1
+    source.realized_daily_eur = Decimal("30")
+
+    knowledge = bridge.publish()
+    assert len(knowledge) == 1
+    assert "Observed daily revenue EUR 30" in knowledge[0].summary
+
+
 def test_no_economic_evidence_creates_no_academy_knowledge():
     academy = AcademyEngine()
     learning = EconomicLearningAdapter(EconomicFeedback(Portfolio()))
