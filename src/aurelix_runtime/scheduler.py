@@ -34,9 +34,6 @@ class Scheduler:
         self.config = config or SchedulerConfig()
         self.submit = submit or self._submit
         owner = getattr(submit, "__self__", None) if submit is not None else None
-        # A system composition root owns the scheduler submission boundary, while
-        # the durable Runtime remains the execution engine. Resolve it explicitly
-        # so Scheduler.tick() never silently falls back to an in-memory queue.
         self._runtime = getattr(owner, "runtime", owner) if owner is not None else None
         self.queue = queue or (PersistentJobQueue(store=self._runtime.store)
                                if self._runtime is not None and hasattr(self._runtime, "store")
@@ -57,6 +54,12 @@ class Scheduler:
             raise ValueError("interval_seconds must be >= 1")
         if self._uses_default_submit and schedule.job_kind not in self.APPROVED_JOB_KINDS:
             raise PermissionError(f"job kind not approved: {schedule.job_kind}")
+        # A schedule name is a durable identity, not a request to append another
+        # copy. Re-registering it updates the canonical schedule in place.
+        for index, existing in enumerate(self.schedules):
+            if existing.name == schedule.name:
+                self.schedules[index] = schedule
+                return
         self.schedules.append(schedule)
 
     def tick(self) -> list[str]:
