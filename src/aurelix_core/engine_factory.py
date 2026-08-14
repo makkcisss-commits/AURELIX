@@ -121,6 +121,7 @@ class EngineFactory:
         self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
         if configured_executor is not None:
             self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner)
+            self.enterprise.set_experiment_submitter(self.runtime.submit_experiment)
         self.core_evaluation = CoreEvaluationEngine()
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
