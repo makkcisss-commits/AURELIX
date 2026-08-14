@@ -27,11 +27,18 @@ class SystemCycleResult:
 
 
 class SystemOrchestrator:
-    """One coordinator for the complete safe autonomous lifecycle."""
+    """One coordinator for the complete safe autonomous lifecycle.
+
+    The orchestrator is deliberately a consumer of the canonical EngineFactory
+    state. It must never create a second ContinuousIntelligence instance for
+    the same running enterprise: Academy, AdaptiveLoop, Runtime and economic
+    learning all need to observe one shared reality.
+    """
 
     def __init__(self, factory) -> None:
         self.factory = factory
-        self.intelligence = ContinuousIntelligence()
+        self.intelligence = factory.continuous_intelligence if hasattr(factory, "continuous_intelligence") else ContinuousIntelligence()
+        self.adaptive_loop = getattr(factory, "adaptive_loop", None)
         self.curated_academy = CuratedAcademy()
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
@@ -75,16 +82,6 @@ class SystemOrchestrator:
         if "status" not in result and hasattr(value, "status"):
             result["status"] = str(getattr(value, "status"))
         return result
-
-    def record_verified_economic_outcome(self, *, opportunity_id: str, source_id: str, expected_daily_eur: Decimal, observed_daily_eur: Decimal, governor_decision_id: str, resource_scope: str | None = None, external_reference: str | None = None) -> EconomicAttribution:
-        """Record real realized economics; forecasts can never enter this path."""
-        entry = self.economic_ledger.record(opportunity_id=opportunity_id, source_id=source_id, expected_daily_eur=expected_daily_eur, observed_daily_eur=observed_daily_eur, governor_decision_id=governor_decision_id, resource_scope=resource_scope, verified=True, external_reference=external_reference)
-        self.factory.runtime.store.audit("economic.attribution.recorded", "economic_ledger", opportunity_id, "verified", {"source_id": source_id, "governor_decision_id": governor_decision_id})
-        return entry
-
-    def status(self) -> dict[str, Any]:
-        runtime = self.factory.runtime
-        return {"runtime": runtime.store.status(), "economic_learning": self.verified_learning.learning_context(), "learning_items": len(self.learning._items), "proposal_count": len(self._proposals), "intelligence": {"domains": len(self.intelligence.domains), "objectives": len(self.intelligence.objectives), "evidence": len(self.intelligence.evidence), "knowledge": len(self.intelligence.knowledge)}}
 
     def _project_academy(self, academy_payload: dict[str, Any], knowledge_payload: dict[str, Any], objective: str) -> dict[str, Any]:
         knowledge_id = knowledge_payload.get("knowledge_id")
