@@ -1,9 +1,4 @@
-"""Unified AURELIX orchestration across intelligence, learning and governance.
-
-This boundary composes existing engines instead of creating a second authority
-model. It can run continuously, but protected execution still terminates at
-Governor/ControlPlane/ExecutionGate boundaries.
-"""
+"""Unified AURELIX orchestration across intelligence, learning and governance."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
@@ -62,22 +57,8 @@ class SystemOrchestrator:
         diagnostics = self._diagnostics()
 
         status = "attention" if governance.get("route") == "BLOCKED" else str(enterprise_dict.get("status") or "unknown")
-        result = SystemCycleResult(
-            objective=objective,
-            status=status,
-            enterprise=enterprise_dict,
-            intelligence=intelligence,
-            governance=governance,
-            economic_learning=economic,
-            diagnostics=diagnostics,
-        )
-        self.factory.runtime.store.audit(
-            "system.cycle.completed",
-            "system_orchestrator",
-            objective,
-            status,
-            {"governance_route": governance.get("route"), "new_learning": economic["new_signals"]},
-        )
+        result = SystemCycleResult(objective=objective, status=status, enterprise=enterprise_dict, intelligence=intelligence, governance=governance, economic_learning=economic, diagnostics=diagnostics)
+        self.factory.runtime.store.audit("system.cycle.completed", "system_orchestrator", objective, status, {"governance_route": governance.get("route"), "new_learning": economic["new_signals"]})
         return result
 
     @staticmethod
