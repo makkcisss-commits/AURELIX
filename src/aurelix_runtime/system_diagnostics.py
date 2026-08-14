@@ -30,6 +30,7 @@ class SystemDiagnostics:
             self._check("runtime", self._runtime),
             self._check("canonical_composition", self._canonical_composition),
             self._check("economic_feedback", self._economic_feedback),
+            self._check("live_opportunity_readiness", self._live_opportunity_readiness),
             self._check("model_provider", lambda: self._provider("model_provider")),
             self._check("research_provider", lambda: self._provider("research_provider")),
             self._check("knowledge_store", self._knowledge),
@@ -93,6 +94,28 @@ class SystemDiagnostics:
             "average_realization_ratio": str(context["average_realization_ratio"]),
             "verified_financial_outcome": context["verified_financial_outcome"],
         })
+
+    def _live_opportunity_readiness(self) -> DiagnosticCheck:
+        """Never confuse deterministic development evidence with real market evidence."""
+        mode = __import__("os").environ.get("AURELIX_MODE", "production").strip().lower()
+        provider = getattr(self.factory, "research_provider", None)
+        if mode == "development":
+            return DiagnosticCheck(
+                "live_opportunity_readiness", "degraded", "medium",
+                "development mode uses synthetic evidence; live opportunity discovery is not enabled",
+                {"mode": mode, "provider": type(provider).__name__ if provider else None, "real_evidence": False},
+            )
+        if provider is None:
+            return DiagnosticCheck(
+                "live_opportunity_readiness", "failed", "high",
+                "no live research provider is configured; real opportunity discovery cannot run",
+                {"mode": mode, "real_evidence": False},
+            )
+        return DiagnosticCheck(
+            "live_opportunity_readiness", "ok", "info",
+            "live research provider is configured; evidence still requires qualification before economic execution",
+            {"mode": mode, "provider": type(provider).__name__, "real_evidence": True},
+        )
 
     def _provider(self, attr: str) -> DiagnosticCheck:
         provider = getattr(self.factory, attr)
