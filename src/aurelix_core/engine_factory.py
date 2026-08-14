@@ -151,3 +151,17 @@ class EngineFactory:
 
     def self_improvement_prepare(self, objective: str, scope: list[str] | None = None):
         return self.self_improvement.prepare(objective, scope)
+
+    def self_improvement_execute(self, plan: dict[str, Any], *, approved: bool = False):
+        return self.self_improvement.execute_and_verify(plan, approved=approved)
+
+    def economic_snapshot(self):
+        return self.economic_feedback.snapshot()
+
+    def economic_learning_context(self):
+        return self.economic_feedback.learning_context()
+
+    def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
+        if self.model_gateway is None:
+            raise RuntimeError("AURELIX_MODEL_BASE_URL is not configured")
+        return self.model_gateway.generate(GenerationRequest(prompt=prompt, action=action, actor_id=actor_id))
