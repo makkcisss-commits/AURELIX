@@ -22,12 +22,12 @@ def approved_opportunity():
     return opportunity.__class__(**{**opportunity.__dict__, "stage": OpportunityStage.APPROVED})
 
 
-def qualification_for(opportunity):
+def qualification_for(opportunity, quality="0.9"):
     evidence = lambda claim, ref: make_evidence(
         source_ref=ref,
         claim=claim,
         relation=EvidenceRelation.SUPPORTS,
-        quality=Decimal("0.9"),
+        quality=Decimal(quality),
     )
     return qualify_opportunity(
         opportunity,
@@ -108,13 +108,12 @@ def test_unapproved_opportunity_cannot_be_admitted():
 def test_unqualified_opportunity_cannot_enter_revenue_pipeline():
     bridge = OpportunityRevenueBridge()
     opportunity = approved_opportunity()
+    qualification = qualification_for(opportunity, quality="0.4")
+    assert not qualification.is_qualified
     with pytest.raises(ValueError):
         bridge.admit(
             opportunity,
-            qualification=qualification_for(opportunity.__class__(**{
-                **opportunity.__dict__,
-                "confidence": Decimal("0"),
-            })),
+            qualification=qualification,
             owner_role="business",
             channel="direct",
         )
