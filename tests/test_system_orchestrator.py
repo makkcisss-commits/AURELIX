@@ -23,6 +23,54 @@ def test_unified_system_cycle_connects_intelligence_and_governance(monkeypatch, 
         factory.runtime.close()
 
 
+def test_system_cycle_routes_through_canonical_economic_feedback(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURELIX_MODE", "development")
+
+    from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
+    from aurelix_runtime.runtime import RuntimeConfig
+
+    factory = EngineFactory(
+        EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")))
+    )
+    try:
+        feedback = {"average_realization_ratio": 1.25, "productive_sources": 2}
+        captured = {}
+
+        monkeypatch.setattr(factory, "economic_learning_context", lambda: feedback)
+
+        def run(objective, *, approved=False, economic_feedback=None):
+            captured.update(objective=objective, approved=approved, economic_feedback=economic_feedback)
+            return type(
+                "Cycle",
+                (),
+                {
+                    "objective": objective,
+                    "research": {"status": "completed"},
+                    "academy": {"lessons": []},
+                    "knowledge": {"knowledge_id": None},
+                    "innovation": {},
+                    "experiment": {},
+                    "evaluation": {},
+                    "opportunity": {},
+                    "business": {},
+                    "status": "awaiting_validation",
+                },
+            )()
+
+        monkeypatch.setattr(factory.enterprise, "run", run)
+        monkeypatch.setattr(factory.system_orchestrator, "_project_academy", lambda *args: {"status": "awaiting_knowledge"})
+
+        factory.run_system_cycle("use verified economics")
+
+        assert captured == {
+            "objective": "use verified economics",
+            "approved": False,
+            "economic_feedback": feedback,
+        }
+    finally:
+        factory.runtime.close()
+
+
 def test_verified_economic_outcome_becomes_idempotent_learning(monkeypatch, tmp_path):
     monkeypatch.setenv("AURELIX_MODE", "development")
 
