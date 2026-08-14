@@ -14,6 +14,9 @@ from .persistence import JobRecord, LeaseLostError, RuntimeStore
 from .pipeline_runner import GovernedPipeline
 
 
+ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     database_path: str = "data/aurelix.db"
@@ -132,15 +135,70 @@ class AurelixRuntime:
             raise KeyError(f"experiment not found: {experiment_id}")
         return Experiment(id=match["experiment_id"], hypothesis=match["hypothesis"], success_criteria=match["success_criteria"], status=match["status"], result=match["result"])
 
-    def create_experiment_runner(self) -> ExperimentRunner:
+    def create_experiment_runner(self, executor: ExperimentExecutor | None = None) -> ExperimentRunner:
         def collector(experiment: Experiment) -> list[dict[str, Any]]:
             self.register_experiment(experiment)
+            existing = self.query_experiment_observations(experiment.id)
+            if existing:
+                return existing
+            if executor is None:
+                raise RuntimeError("experiment executor unavailable; no measurement may be fabricated")
+            observations = executor(experiment)
+            if observations:
+                for observation in observations:
+                    if not isinstance(observation, dict):
+                        raise TypeError("experiment executor must return dictionaries")
+                    self.record_observation(experiment.id, observation)
             return self.query_experiment_observations(experiment.id)
-        def on_complete(experiment: Experiment, _run) -> None:
+
+        def on_complete(experiment: Experiment, run) -> None:
             self.register_experiment(experiment)
-            self.store.audit("experiment.evaluated", "experiment-runner", experiment.id,
-                             "succeeded" if experiment.result and experiment.result.get("passed") else "evaluated", experiment.result or {})
+            outcome = "succeeded" if experiment.result and experiment.result.get("passed") else "evaluated"
+            self.store.audit("experiment.evaluated", "experiment-runner", experiment.id, outcome,
+                             {"status": experiment.status, "run_status": run.status, "result": experiment.result or {}})
+
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
+
+    def register_experiment_runner(
+        self,
+        executor: ExperimentExecutor,
+        kind: str = "experiment.run",
+        runner: ExperimentRunner | None = None,
+    ) -> ExperimentRunner:
+        if executor is None:
+            raise ValueError("experiment executor is required")
+        runner = runner or self.create_experiment_runner(executor)
+
+        def handle(payload: dict[str, str]) -> Any:
+            experiment_id = payload.get("experiment_id", "").strip()
+            if not experiment_id:
+                raise ValueError("experiment_id is required")
+            experiment = self.get_experiment(experiment_id)
+            return runner.execute(experiment)
+
+        self.register(kind, handle)
+        return runner
+
+    def _find_experiment_job(self, experiment_id: str) -> JobRecord | None:
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? ORDER BY created_at DESC LIMIT 1",
+                ("experiment.run", experiment_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.store._record(row)
+
+    def submit_experiment(self, experiment: Experiment, kind: str = "experiment.run") -> str:
+        if kind not in self.handlers and kind not in self.claimed_handlers:
+            raise ValueError(f"unregistered job kind: {kind}")
+        self.register_experiment(experiment)
+        existing = self._find_experiment_job(experiment.id)
+        if existing is not None:
+            return existing.job_id
+        record = self.store.enqueue(kind, {"experiment_id": experiment.id}, execution_id=experiment.id)
+        self.store.audit("experiment.queued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id})
+        return record.job_id
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
         if kind not in self.handlers and kind not in self.claimed_handlers:
