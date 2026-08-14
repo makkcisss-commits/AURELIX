@@ -75,7 +75,7 @@ class EngineStore:
         with self.runtime_store.lock, self.runtime_store.db:
             self.runtime_store.db.execute(
                 "INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, json.dumps(value, sort_keys=True)),
+                (key, json.dumps(value, sort_keys=True, default=str)),
             )
 
     def _load(self) -> None:
