@@ -81,13 +81,8 @@ class AurelixRuntime:
     def register_autonomy(self, kind: str = "autonomy.run") -> None:
         """Mount the full research→knowledge→experiment→business fabric on this runtime."""
         from .autonomy_fabric import AutonomyFabric
-
         fabric = AutonomyFabric(store=self.store)
-
-        def handle(record: JobRecord) -> Any:
-            return fabric.run_claimed(record)
-
-        self.register_claimed(kind, handle)
+        self.register_claimed(kind, fabric.run_claimed)
 
     def register_pipeline(self, pipeline: GovernedPipeline | None = None, kind: str = "pipeline.run") -> None:
         governed = pipeline or GovernedPipeline()
@@ -104,8 +99,12 @@ class AurelixRuntime:
         now = datetime.now(timezone.utc).isoformat()
         with self.store.lock, self.store.db:
             self.store.db.execute("""INSERT INTO experiments(experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?) ON CONFLICT(experiment_id) DO UPDATE SET hypothesis=excluded.hypothesis,
-                success_criteria=excluded.success_criteria,status=excluded.status,result=excluded.result,updated_at=excluded.updated_at""",
+                VALUES (?,?,?,?,?,?,?) ON CONFLICT(experiment_id) DO UPDATE SET
+                hypothesis=excluded.hypothesis,
+                success_criteria=excluded.success_criteria,
+                status=CASE WHEN experiments.status='complete' THEN experiments.status ELSE excluded.status END,
+                result=CASE WHEN experiments.status='complete' THEN experiments.result ELSE excluded.result END,
+                updated_at=excluded.updated_at""",
                 (experiment.id, experiment.hypothesis, json.dumps(experiment.success_criteria), experiment.status,
                  json.dumps(experiment.result) if experiment.result is not None else None, now, now))
 
@@ -159,12 +158,7 @@ class AurelixRuntime:
 
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
-    def register_experiment_runner(
-        self,
-        executor: ExperimentExecutor,
-        kind: str = "experiment.run",
-        runner: ExperimentRunner | None = None,
-    ) -> ExperimentRunner:
+    def register_experiment_runner(self, executor: ExperimentExecutor, kind: str = "experiment.run", runner: ExperimentRunner | None = None) -> ExperimentRunner:
         if executor is None:
             raise ValueError("experiment executor is required")
         runner = runner or self.create_experiment_runner(executor)
@@ -173,21 +167,19 @@ class AurelixRuntime:
             experiment_id = payload.get("experiment_id", "").strip()
             if not experiment_id:
                 raise ValueError("experiment_id is required")
-            experiment = self.get_experiment(experiment_id)
-            return runner.execute(experiment)
+            return runner.execute(self.get_experiment(experiment_id))
 
         self.register(kind, handle)
         return runner
 
-    def _find_experiment_job(self, experiment_id: str) -> JobRecord | None:
+    def _find_experiment_job(self, experiment_id: str, *, include_terminal: bool = True) -> JobRecord | None:
         with self.store.lock:
             row = self.store.db.execute(
-                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? "
+                + ("ORDER BY created_at DESC LIMIT 1" if include_terminal else "AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1"),
                 ("experiment.run", experiment_id),
             ).fetchone()
-        if row is None:
-            return None
-        return self.store._record(row)
+        return self.store._record(row) if row is not None else None
 
     def submit_experiment(self, experiment: Experiment, kind: str = "experiment.run") -> str:
         if kind not in self.handlers and kind not in self.claimed_handlers:
@@ -195,8 +187,17 @@ class AurelixRuntime:
         self.register_experiment(experiment)
         existing = self._find_experiment_job(experiment.id)
         if existing is not None:
+            persisted = self.get_experiment(experiment.id)
+            if persisted.status == "complete" and persisted.result is not None:
+                return existing.job_id
+            if existing.status in {"queued", "running"}:
+                return existing.job_id
+            if persisted.status == "awaiting_measurement" and existing.status == "completed":
+                record = self.store.enqueue(kind, {"experiment_id": experiment.id})
+                self.store.audit("experiment.requeued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id, "previous_job_id": existing.job_id})
+                return record.job_id
             return existing.job_id
-        record = self.store.enqueue(kind, {"experiment_id": experiment.id}, execution_id=experiment.id)
+        record = self.store.enqueue(kind, {"experiment_id": experiment.id})
         self.store.audit("experiment.queued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id})
         return record.job_id
 
@@ -218,11 +219,9 @@ class AurelixRuntime:
         record = self.store.claim_next(max_attempts=self.config.max_attempts, worker_id=self.worker_id)
         if not record:
             return False
-        job = Job(record.job_id, record.name, {str(k): str(v) for k, v in record.payload.items()}, record.status,
-                  record.attempts, record.worker_id, record.lease_token)
+        job = Job(record.job_id, record.name, {str(k): str(v) for k, v in record.payload.items()}, record.status, record.attempts, record.worker_id, record.lease_token)
         heartbeat_stop = threading.Event()
-        heartbeat_thread = threading.Thread(target=self._heartbeat_loop, args=(job, heartbeat_stop),
-                                             name=f"aurelix-heartbeat-{job.job_id[:8]}", daemon=True)
+        heartbeat_thread = threading.Thread(target=self._heartbeat_loop, args=(job, heartbeat_stop), name=f"aurelix-heartbeat-{job.job_id[:8]}", daemon=True)
         heartbeat_thread.start()
         try:
             if job.kind in self.claimed_handlers:
@@ -241,8 +240,7 @@ class AurelixRuntime:
             except LeaseLostError:
                 self.store.audit("job.lease_lost", "runtime", job.job_id, "aborted", {"kind": job.kind, "error": str(exc)})
             else:
-                self.store.audit("job.retry" if retry else "job.failed", "runtime", job.job_id,
-                                 "queued" if retry else "failed", {"kind": job.kind, "error": str(exc), "attempt": job.attempts})
+                self.store.audit("job.retry" if retry else "job.failed", "runtime", job.job_id, "queued" if retry else "failed", {"kind": job.kind, "error": str(exc), "attempt": job.attempts})
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=max(self.config.heartbeat_seconds, 1.0))
