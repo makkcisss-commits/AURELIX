@@ -37,11 +37,19 @@ def test_factory_mounts_executor_and_enterprise_queue(tmp_path: Path) -> None:
         assert callable(factory.enterprise.experiment_submitter)
 
         experiment = Experiment("factory-experiment-1", "mounted executor measures experiment", [{"metric": "score", "operator": ">=", "target": 1.0}])
+        factory.enterprise._save_experiment_context(experiment.id, objective="validate a mounted capability", approved=False, economic_feedback={})
         job_id = runtime.submit_experiment(experiment)
         assert runtime.run_once() is True
         assert runtime.store.get(job_id).status == "completed"
         persisted = runtime.get_experiment(experiment.id)
         assert persisted.result is not None
         assert persisted.result["passed"] is True
+        context = factory.enterprise._load_experiment_context(experiment.id)
+        assert context["completed"] is True
+        assert context["final_result"]["experiment_id"] == experiment.id
+
+        # A worker retry/replay must not execute the downstream business boundary twice.
+        replay = factory.enterprise.continue_after_experiment(experiment.id)
+        assert replay == context["final_result"]
     finally:
         runtime.close()
