@@ -1,6 +1,7 @@
 """Integrated AURELIX engine implementations with optional durable state."""
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +19,22 @@ class Evidence:
     claim: str
     confidence: float = 0.0
     verified: bool = False
+
+    @property
+    def evidence_id(self) -> str:
+        """Return a stable identifier for this evidence item.
+
+        Evidence is deliberately value-addressed here: the identifier is
+        deterministic across process restarts and does not add mutable state
+        to the persisted schema. This gives downstream opportunity records a
+        durable finding reference without introducing a second evidence store.
+        """
+        material = json.dumps(
+            {"source": self.source, "claim": self.claim},
+            sort_keys=True,
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(material).hexdigest()
 
 
 @dataclass

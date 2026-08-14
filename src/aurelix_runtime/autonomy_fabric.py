@@ -7,6 +7,7 @@ import threading
 from typing import Any
 from uuid import uuid4
 
+from aurelix_core.capability_escalation import CapabilityEscalator
 from .experiment_runner import ExperimentRunner
 from .integrated_engines import (
     AcademyEngine, BusinessEngine, EngineStore, EvaluationEngine,
@@ -48,12 +49,18 @@ class AutonomyRun:
 class AutonomyFabric:
     """Run the complete research-to-business chain under one durable execution."""
 
+    _SUPPORTED_CAPABILITIES = frozenset({
+        "research", "knowledge", "academy", "innovation", "experiment",
+        "evaluation", "opportunity", "business", "economic-analysis",
+    })
+
     def __init__(self, store: RuntimeStore | None = None, engine_store: EngineStore | None = None,
                  research: ResearchEngine | None = None, academy: AcademyEngine | None = None,
                  knowledge: KnowledgeEngine | None = None, innovation: InnovationEngine | None = None,
                  experiment: ExperimentEngine | None = None, evaluation: EvaluationEngine | None = None,
                  opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None,
-                 message_fabric: MessageFabric | None = None) -> None:
+                 message_fabric: MessageFabric | None = None,
+                 capability_escalator: CapabilityEscalator | None = None) -> None:
         self.store = store or RuntimeStore()
         self.message_fabric = message_fabric or MessageFabric()
         self.knowledge_repository = SQLiteKnowledgeRepository(self.store)
@@ -67,6 +74,7 @@ class AutonomyFabric:
         self.evaluation = evaluation or EvaluationEngine()
         self.opportunity = opportunity or OpportunityEngine()
         self.business = business or BusinessEngine(require_approval=True)
+        self.capability_escalator = capability_escalator
         self.experiment_runner = ExperimentRunner(collector=self._collect_observations, on_complete=self._persist_experiment)
 
     def _emit(self, topic: str, sender: str, execution_id: str, payload: dict[str, Any], *, causation_id: str | None = None) -> None:
@@ -99,10 +107,51 @@ class AutonomyFabric:
             if not self.store.heartbeat(execution_id, worker_id, lease_token):
                 return
 
-    def run_claimed(self, claimed: JobRecord) -> AutonomyRun:
+    def _capability_learning_result(self, claimed: JobRecord, required_capabilities: list[str]) -> AutonomyRun:
+        unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
+        if not unknown:
+            raise ValueError("capability learning requested without an unknown capability")
+        gaps = []
+        if self.capability_escalator is None:
+            self.store.record_audit(claimed.job_id, "autonomy.capability_escalation_unavailable", {"capabilities": unknown})
+            status = "capability_escalation_unavailable"
+            academy = {"status": "blocked", "capability_gaps": unknown}
+        else:
+            for capability in unknown:
+                gap, objective = self.capability_escalator.escalate(
+                    capability=capability,
+                    reason="required capability is not validated by the runtime",
+                    requested_by=claimed.worker_id or "autonomy",
+                )
+                gaps.append({"gap_id": gap.gap_id, "capability": gap.capability, "study_objective_id": objective.objective_id})
+                self.store.record_audit(claimed.job_id, "autonomy.capability_escalated", gaps[-1])
+            status = "capability_learning_required"
+            academy = {"status": "learning_required", "capability_gaps": gaps}
+        result = {
+            "execution_id": claimed.job_id,
+            "status": status,
+            "research": {"status": "not_started"},
+            "academy": academy,
+            "knowledge": {"status": "blocked"},
+            "innovation": {"status": "blocked"},
+            "experiment": {"status": "blocked"},
+            "evaluation": {"status": "blocked"},
+            "opportunity": {"status": "blocked"},
+            "business": {"status": "blocked", "reason": "required capability is not validated"},
+            "mission_id": "",
+        }
+        self.store.complete(claimed.job_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+        return AutonomyRun(**result)
+
+    def run_claimed(self, claimed: JobRecord, required_capabilities: list[str] | None = None) -> AutonomyRun:
         """Execute an already-claimed job without creating a second lifecycle."""
         if claimed.status != "running" or not claimed.worker_id or not claimed.lease_token:
             raise RuntimeError(f"execution is not actively owned: {claimed.job_id}")
+        required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
+        if required_capabilities:
+            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
+            if unknown:
+                return self._capability_learning_result(claimed, required_capabilities)
         execution_id = claimed.job_id
         objective = str(claimed.payload.get("objective", "")).strip()
         if not objective:
@@ -134,12 +183,7 @@ class AutonomyFabric:
             if experiment.get("experiment_id"):
                 experiment_record = self.engines.experiments[experiment["experiment_id"]]
                 experiment_run = self.experiment_runner.execute(experiment_record)
-                experiment = {
-                    "experiment_id": experiment_record.id,
-                    "status": experiment_run.status,
-                    "criteria": experiment_record.success_criteria,
-                    "result": experiment_record.result,
-                }
+                experiment = {"experiment_id": experiment_record.id, "status": experiment_run.status, "criteria": experiment_record.success_criteria, "result": experiment_record.result}
             self._emit("experiment.completed", "experiment", execution_id, {"status": experiment.get("status"), "experiment_id": experiment.get("experiment_id")})
             evaluation = self.evaluation.run(experiment, self.engines)
             self._emit("evaluation.completed", "validation", execution_id, {"status": evaluation.get("status")})
@@ -148,14 +192,7 @@ class AutonomyFabric:
             business = self.business.run(opportunity, approved=False)
             self._emit("business.completed", "business", execution_id, {"status": business.get("status"), "approved": False})
             lifecycle_status = business.get("status") or "completed"
-            result = _jsonable({
-                "execution_id": execution_id,
-                "status": lifecycle_status,
-                "research": research, "academy": academy, "knowledge": knowledge,
-                "innovation": innovation, "experiment": experiment, "evaluation": evaluation,
-                "opportunity": opportunity, "business": business,
-                "mission_id": mission.mission_id,
-            })
+            result = _jsonable({"execution_id": execution_id, "status": lifecycle_status, "research": research, "academy": academy, "knowledge": knowledge, "innovation": innovation, "experiment": experiment, "evaluation": evaluation, "opportunity": opportunity, "business": business, "mission_id": mission.mission_id})
             mission.complete([{"type": "pipeline_result", "status": lifecycle_status, "verified": lifecycle_status == "completed"}])
             self.store.complete(execution_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id, "mission_id": mission.mission_id})
@@ -170,22 +207,19 @@ class AutonomyFabric:
             stop.set()
             heartbeat.join(timeout=max(1.0, self.store.lease_seconds / 2.0))
 
-    def run(self, objective: str, execution_id: str | None = None) -> AutonomyRun:
+    def run(self, objective: str, execution_id: str | None = None, required_capabilities: list[str] | None = None) -> AutonomyRun:
         execution_id = execution_id or str(uuid4())
-        job = self.store.enqueue("autonomy.run", {"objective": objective}, execution_id=execution_id)
+        job = self.store.enqueue("autonomy.run", {"objective": objective, "required_capabilities": required_capabilities or []}, execution_id=execution_id)
         worker_id = f"autonomy:{execution_id}"
         claimed = self.store.claim(job.job_id, worker_id=worker_id)
         if claimed is None:
             raise RuntimeError(f"autonomy execution is not claimable: {execution_id}")
         try:
-            return self.run_claimed(claimed)
+            return self.run_claimed(claimed, required_capabilities=required_capabilities)
         except Exception as exc:
             current = self.store.get(execution_id)
             if current and current.status == "running":
-                self.store.finish(
-                    execution_id, False, str(exc), retry=False,
-                    worker_id=claimed.worker_id, lease_token=claimed.lease_token,
-                )
+                self.store.finish(execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             raise
 
     def close(self) -> None:
