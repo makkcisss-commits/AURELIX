@@ -51,7 +51,7 @@ class SystemOrchestrator:
         if not objective:
             raise ValueError("objective is required")
 
-        enterprise = self.factory.enterprise.run(objective, approved=False)
+        enterprise = self.factory.run_enterprise_cycle(objective, approved=False)
         enterprise_dict = asdict(enterprise)
         academy_payload = enterprise_dict["academy"]
         knowledge_payload = enterprise_dict["knowledge"]
