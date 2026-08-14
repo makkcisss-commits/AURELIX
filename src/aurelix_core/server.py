@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -19,8 +20,6 @@ from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
 from aurelix_runtime.system import AurelixSystem
-
-app = FastAPI(title="AURELIX Private API", version="0.4.0", docs_url=None, redoc_url=None, openapi_url=None)
 
 _OWNER_ID = os.getenv("AURELIX_OWNER_ID", "owner")
 _OWNER_SECRET = os.getenv("AURELIX_OWNER_SECRET")
@@ -116,30 +115,42 @@ def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOn
     return ReadOnlyRequest(_identity, _credential, x_aurelix_secret)
 
 
-@app.on_event("startup")
-def start_unified_system() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Own the long-running Runtime for the complete ASGI application lifetime."""
     global _system_thread
-    if _system is None:
-        return
-    enabled = os.getenv("AURELIX_AUTONOMY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
-    if not enabled:
-        return
-    interval = float(os.getenv("AURELIX_AUTONOMY_INTERVAL_SECONDS", "900"))
-    objective = os.getenv(
-        "AURELIX_AUTONOMY_OBJECTIVE",
-        "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
-    )
-    _system.schedule_system_cycle("default-autonomy", interval, objective)
-    _system_thread = threading.Thread(target=_system.run_forever, name="aurelix-system", daemon=True)
-    _system_thread.start()
-
-
-@app.on_event("shutdown")
-def stop_unified_system() -> None:
     if _system is not None:
-        _system.stop()
-    if _system_thread is not None:
-        _system_thread.join(timeout=5)
+        enabled = os.getenv("AURELIX_AUTONOMY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+        if enabled:
+            interval = float(os.getenv("AURELIX_AUTONOMY_INTERVAL_SECONDS", "900"))
+            objective = os.getenv(
+                "AURELIX_AUTONOMY_OBJECTIVE",
+                "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
+            )
+            _system.schedule_system_cycle("default-autonomy", interval, objective)
+            thread = _system_thread
+            if thread is None or not thread.is_alive():
+                _system_thread = threading.Thread(target=_system.run_forever, name="aurelix-system", daemon=True)
+                _system_thread.start()
+    try:
+        yield
+    finally:
+        if _system is not None:
+            _system.stop()
+        thread = _system_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5)
+        _system_thread = None
+
+
+app = FastAPI(
+    title="AURELIX Private API",
+    version="0.4.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
+)
 
 
 @app.get("/health", include_in_schema=False)
