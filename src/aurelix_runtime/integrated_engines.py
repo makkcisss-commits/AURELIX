@@ -79,19 +79,18 @@ class EngineStore:
             )
 
     def _load(self) -> None:
+        data = self._read_state("engine.knowledge") or {}
+        self.knowledge = {
+            item_id: KnowledgeItem(
+                id=item["id"], title=item["title"], content=item["content"],
+                evidence=[Evidence(**e) for e in item.get("evidence", [])],
+                tags=item.get("tags", []), created_at=item.get("created_at", now()),
+            ) for item_id, item in data.items()
+        }
         if self.knowledge_repository is not None:
             from .knowledge_store import KnowledgeQuery
             for item in self.knowledge_repository.search(KnowledgeQuery("", limit=500)):
                 self.knowledge[item.id] = item
-        else:
-            data = self._read_state("engine.knowledge") or {}
-            self.knowledge = {
-                item_id: KnowledgeItem(
-                    id=item["id"], title=item["title"], content=item["content"],
-                    evidence=[Evidence(**e) for e in item.get("evidence", [])],
-                    tags=item.get("tags", []), created_at=item.get("created_at", now()),
-                ) for item_id, item in data.items()
-            }
         data = self._read_state("engine.experiments") or {}
         self.experiments = {k: Experiment(**v) for k, v in data.items()}
         data = self._read_state("engine.opportunities") or {}
@@ -99,12 +98,11 @@ class EngineStore:
         self.audit = self._read_state("engine.audit") or []
 
     def _persist(self) -> None:
-        if self.knowledge_repository is None:
-            self._write_state(
-                "engine.knowledge",
-                {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()},
-            )
-        else:
+        self._write_state(
+            "engine.knowledge",
+            {k: {**asdict(v), "evidence": [asdict(e) for e in v.evidence]} for k, v in self.knowledge.items()},
+        )
+        if self.knowledge_repository is not None:
             for item in self.knowledge.values():
                 self.knowledge_repository.put(item)
         self._write_state("engine.experiments", {k: asdict(v) for k, v in self.experiments.items()})
@@ -194,29 +192,8 @@ class InnovationEngine:
 class ExperimentEngine:
     name = "experiment"
 
-    def __init__(self, executor: Optional[Callable[[Experiment, Dict[str, Any]], Dict[str, Any]]] = None):
-        self.executor = executor
-
-    @staticmethod
-    def _internal_execute(exp: Experiment, innovation: Dict[str, Any]) -> Dict[str, Any]:
-        """Perform a bounded local validation when no external executor is configured.
-
-        This never claims a market or financial outcome. It only proves that the
-        proposal is executable as an internal experiment and records that scope.
-        """
-        hypothesis = exp.hypothesis.strip()
-        criteria_ok = bool(exp.success_criteria)
-        passed = bool(hypothesis and criteria_ok)
-        return {
-            "passed": passed,
-            "confidence": 0.60 if passed else 0.0,
-            "metrics": {"hypothesis_present": bool(hypothesis), "criteria_present": criteria_ok},
-            "execution_mode": "internal_validation",
-            "scope": "local_only",
-            "financial_outcome_verified": False,
-        }
-
     def run(self, innovation: Dict[str, Any], store: EngineStore) -> Dict[str, Any]:
+        """Create an experiment proposal; execution belongs to ExperimentRunner."""
         if innovation.get("status") != "proposal":
             store.record("experiment.blocked", reason=innovation.get("status", "unknown"))
             return {"experiment_id": None, "status": "awaiting_innovation", "criteria": []}
@@ -226,20 +203,8 @@ class ExperimentEngine:
             [{"metric":"success","operator":">=","target":1.0}],
         )
         store.experiments[exp.id] = exp
-        try:
-            result = self.executor(exp, innovation) if self.executor else self._internal_execute(exp, innovation)
-            if not isinstance(result, dict) or "passed" not in result:
-                raise ValueError("experiment executor must return a result containing 'passed'")
-            exp.result = result
-            exp.status = "completed"
-            store.record("experiment.executed", experiment_id=exp.id, execution_mode=result.get("execution_mode", "external"), passed=bool(result.get("passed")))
-        except Exception as exc:
-            exp.status = "failed"
-            exp.result = {"passed": False, "confidence": 0.0, "execution_mode": "error", "error": str(exc)}
-            store.record("experiment.failed", experiment_id=exp.id, error=type(exc).__name__)
-        store.experiments[exp.id] = exp
-        store.persist()
-        return {"experiment_id": exp.id, "status": exp.status, "criteria": exp.success_criteria, "result": exp.result}
+        store.record("experiment.proposed", experiment_id=exp.id)
+        return {"experiment_id": exp.id, "status": exp.status, "criteria": exp.success_criteria}
 
 
 class EvaluationEngine:
@@ -280,4 +245,4 @@ class BusinessEngine:
             return {"status": "awaiting_validation", "opportunity_id": opportunity_id}
         if self.require_approval and not approved:
             return {"status":"awaiting_approval", "opportunity_id":opportunity_id}
-        return {"status":"ready_for_execution", "opportunity_id":opportunity_id, "validation_scope": opportunity.get("validation_scope", "unknown"), "financial_outcome_verified": opportunity.get("financial_outcome_verified", False)}
+        return {"status":"ready_for_execution", "opportunity_id":opportunity_id}

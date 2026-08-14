@@ -24,14 +24,15 @@ class KnowledgeLearningService:
         self.academy = AcademyEngine()
 
     def learn(self, objective: str, evidence: List[Evidence]) -> LearningResult:
-        research = {"objective": objective, "evidence": evidence}
+        verified = [item for item in evidence if item.verified]
+        research = {"objective": objective, "evidence": verified, "status": "completed" if verified else "no_evidence"}
         academy = self.academy.run(research, _AuditOnlyStore())
-        lessons = academy["lessons"]
+        lessons = [lesson for lesson in academy["lessons"] if lesson.strip()]
         item = KnowledgeItem(
             id=str(uuid4()),
             title=f"Validated learning: {objective}",
             content="\n".join(lessons),
-            evidence=[e for e in evidence if e.verified],
+            evidence=verified,
             tags=["academy", "validated"],
         )
         self.repository.put(item)
@@ -40,5 +41,4 @@ class KnowledgeLearningService:
 
 class _AuditOnlyStore:
     def record(self, event: str, **data: object) -> None:
-        # The outer Runtime owns authoritative audit persistence.
         return None

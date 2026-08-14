@@ -59,7 +59,11 @@ class AurelixSystem:
                     continue
                 self.runtime.submit(schedule.job_kind, schedule.payload)
                 self._next_run[schedule.name] = now + schedule.interval_seconds
-                self.store.record_audit("schedule.enqueued", "scheduler", schedule.name, "queued", {"job_kind": schedule.job_kind})
+                self.store.record_audit(
+                    None,
+                    "schedule.enqueued",
+                    {"actor": "scheduler", "subject": schedule.name, "outcome": "queued", "job_kind": schedule.job_kind},
+                )
                 count += 1
         return count
 

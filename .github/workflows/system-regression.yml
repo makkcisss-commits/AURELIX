@@ -1,13 +1,17 @@
 name: AURELIX System Regression
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: system-regression-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   system-regression:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -21,6 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install -e .
           python -m pip install pytest
 
       - name: Run system regression suite
@@ -34,5 +39,5 @@ jobs:
           tests/test_approval_workflow.py
           tests/test_innovation.py
 
-      - name: Run smoke checks
-        run: python -m pytest -q tests/test_smoke.py
+      - name: Run packaged smoke checks
+        run: aurelix-smoke
