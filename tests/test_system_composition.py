@@ -29,7 +29,7 @@ def test_system_blocks_high_risk_submission_before_queue(tmp_path):
         rows = system.store.db.execute("SELECT status FROM jobs WHERE name='danger'").fetchall()
         assert rows == []
         audit = system.store.db.execute(
-            "SELECT event_type FROM audit_log WHERE event_type='system.submission_blocked'"
+            "SELECT event_type FROM audit_log WHERE event_type='orchestrator.submission_blocked'"
         ).fetchall()
         assert audit
     finally:
