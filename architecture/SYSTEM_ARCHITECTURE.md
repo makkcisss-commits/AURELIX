@@ -1,34 +1,63 @@
 # AURELIX Architecture
 
-AURELIX is a private venture intelligence platform composed of a governance core, specialized engines, agents, data/state services, and controlled external interfaces.
+AURELIX is one governed enterprise machine with specialized engines behind one canonical composition root.
 
 ```text
 Owner / CEO
-    |
-    v
-Governor
-    |
-    +-- Research Engine
-    +-- Academy Engine
-    +-- Opportunity Engine
-    +-- Innovation Engine
-    +-- Build Engine
-    +-- Business Engine
-    +-- Revenue Engine
-    +-- Learning Engine
-    |
-    +-- Treasury / Approval Layer
-    +-- Security / Audit Layer
-    +-- Sandbox / Experiment Layer
+    ↓
+Identity / Authorization
+    ↓
+Governor + Policies + Audit
+    ↓
+SystemOrchestrator
+    ↓
+EngineFactory  ← canonical composition root
+    ├── Research / Evidence / Knowledge / Academy
+    ├── Innovation / Experiment / Evaluation
+    ├── Opportunity / Business / Revenue / Treasury
+    ├── Learning / Economic Feedback
+    └── AutonomyFabric
+            ↓
+      Shared Runtime + Scheduler + MessageFabric + durable state
 ```
 
-## Design rules
-1. Governance is centralized; execution is modular.
-2. Engines communicate through explicit contracts rather than hidden shared state.
-3. Protected actions pass through authorization gates.
-4. Experiments are isolated from critical production state.
-5. Every important decision should be explainable through inputs, policy, evidence, and outcome.
-6. The web application and future mobile application are clients of the platform, not alternate authorities.
+## Canonical flow
 
-## Initial product boundary
-The first implementation is an internal control plane. Public-facing products are future business outputs, not the administrative interface itself.
+```text
+Research
+  → source-backed evidence
+  → knowledge
+  → opportunity candidates
+  → economic qualification
+  → Governor decision
+  → owner approval when required
+  → bounded execution
+  → real observation
+  → revenue measurement
+  → verified learning
+  → next-cycle context
+```
+
+## Composition rule
+
+`EngineFactory` owns the production composition. `AurelixSystem` is a façade over that composition. `SystemOrchestrator` must call the factory's canonical cycle rather than constructing a parallel path. `AutonomyFabric` shares the exact engine instances and durable store used by `EnterpriseLoop`.
+
+## Authority rule
+
+Recommendation, model output, research content, opportunity score and economic forecast are never authorization. The Governor and applicable owner approval are the authority boundary. Runtime only executes work that has passed the required gate.
+
+## Economic rule
+
+The system ranks opportunities using evidence, expected value, effort, risk, confidence, complexity and time-to-result. It must then verify demand, monetization path and source reality before revenue admission. Forecasts remain forecasts until an external or otherwise authentic observation is recorded.
+
+## Reliability rule
+
+Jobs are durable, bounded, retryable and lease-fenced. Messages are structured and idempotent. Recovery must preserve audit and provenance.
+
+## Integrity rule
+
+There is one canonical source per responsibility. Exact duplicate file content is an integrity failure and is checked by CI. Historical documents may remain for traceability, but they are not alternate authorities.
+
+## Production boundary
+
+External identity, secret management, payment providers, real research providers, network ingress, monitoring and production data remain deployment concerns. The repository provides the governed skeleton and integration contracts; it must never fabricate real business results.
