@@ -1,8 +1,10 @@
 from pathlib import Path
+
 from aurelix_core.capability_escalation import CapabilityEscalator
 from aurelix_core.continuous_intelligence import ContinuousIntelligence
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.persistence import RuntimeStore
+
 
 def test_unknown_runtime_capability_is_blocked_and_escalated(tmp_path: Path) -> None:
     store = RuntimeStore(tmp_path / "aurelix.db")
@@ -15,5 +17,5 @@ def test_unknown_runtime_capability_is_blocked_and_escalated(tmp_path: Path) -> 
     assert run.academy["capability_gaps"]
     assert len(intelligence.objectives) == 1
     assert store.get(run.execution_id).status == "completed"
-    assert any(event["event"] == "autonomy.capability_escalated" for event in store.audit)
+    assert any(event["event"] == "autonomy.capability_escalated" for event in store.audit_summary())
     fabric.close()
