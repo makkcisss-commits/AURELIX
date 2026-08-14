@@ -71,14 +71,14 @@ class SystemValidation:
         runner = getattr(self.factory, "experiment_runner", None)
         executor = getattr(self.factory, "experiment_executor", None)
         runtime = getattr(self.factory, "runtime", None)
-        registered = getattr(runtime, "_experiment_runner", None) if runtime is not None else None
+        handlers = getattr(runtime, "handlers", {}) if runtime is not None else {}
         if runner is None:
             return {"status": "failed", "reason": "experiment_runner_missing"}
         if executor is None:
             return {"status": "failed", "reason": "real_experiment_executor_missing"}
-        if registered is not runner:
-            return {"status": "failed", "reason": "runtime_experiment_runner_not_canonical"}
-        return {"status": "ok", "runner": type(runner).__name__, "executor_configured": True}
+        if "experiment.run" not in handlers:
+            return {"status": "failed", "reason": "experiment_run_job_not_registered"}
+        return {"status": "ok", "runner": type(runner).__name__, "executor_configured": True, "job_registered": True}
 
     def _economic_feedback(self) -> dict[str, Any]:
         context = self.factory.economic_learning_context()
