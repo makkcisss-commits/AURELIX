@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from aurelix_core.governor import Governor, GovernorRoute
+
 from .runtime import AurelixRuntime, RuntimeConfig
 from .scheduler import Schedule, Scheduler, SchedulerConfig
 
@@ -18,19 +20,22 @@ class SystemConfig:
 
 
 class AurelixSystem:
-    """Canonical composition root: one store, queue, worker, scheduler and fabric."""
+    """Canonical composition root: one store, queue, worker, scheduler and governance boundary."""
 
     def __init__(self, config: SystemConfig | None = None, *, runtime: AurelixRuntime | None = None,
-                 cycle_handler: Callable[[str], Any] | None = None) -> None:
+                 cycle_handler: Callable[[str], Any] | None = None,
+                 governor: Governor | None = None) -> None:
         self.config = config or SystemConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self._owns_runtime = runtime is None
+        self.governor = governor or Governor()
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
         self.cycle_handler = cycle_handler
         if cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: cycle_handler(str(payload.get("objective", ""))))
-        self.scheduler = Scheduler(submit=self.runtime.submit, config=self.config.scheduler)
+        # All system-originated and scheduled submissions cross this boundary.
+        self.scheduler = Scheduler(submit=self.submit, config=self.config.scheduler)
         self._stop = threading.Event()
         self._started = False
         self._next_run: dict[str, float] = {}
@@ -64,7 +69,24 @@ class AurelixSystem:
             self.scheduler.add(schedule)
             self._next_run.setdefault(name, time.monotonic())
 
-    def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
+    def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
+               requires_capital: bool = False, production_change: bool = False) -> str:
+        """Submit work only after the canonical Governor routing decision."""
+        route = self.governor.route(
+            source="system",
+            action=kind,
+            requires_capital=requires_capital,
+            risk=risk,
+            production_change=production_change,
+        )
+        if route.route is not GovernorRoute.POLICY_ALLOWED:
+            self.store.record_audit(
+                None,
+                "system.submission_blocked",
+                {"actor": "governor", "subject": kind, "outcome": route.route.value,
+                 "request_id": route.request_id, "reasons": list(route.reasons)},
+            )
+            raise PermissionError(route.reasons)
         return self.runtime.submit(kind, payload or {})
 
     def _enqueue_due(self) -> int:
@@ -74,7 +96,7 @@ class AurelixSystem:
             for schedule in self.scheduler.schedules:
                 if now < self._next_run.get(schedule.name, now):
                     continue
-                self.runtime.submit(schedule.job_kind, schedule.payload)
+                self.submit(schedule.job_kind, schedule.payload)
                 self._next_run[schedule.name] = now + schedule.interval_seconds
                 self.store.record_audit(
                     None,
@@ -122,6 +144,7 @@ class AurelixSystem:
             "worker_id": self.runtime.worker_id,
             "store": "shared",
             "scheduler": "shared-runtime",
+            "governor": "canonical-submission-boundary",
             "autonomy": "registered" if "autonomy.run" in self.runtime.claimed_handlers else "disabled",
             "system_cycle": "registered" if "system.cycle" in self.runtime.handlers else "disabled",
             "schedules": [s.name for s in self.scheduler.schedules],
