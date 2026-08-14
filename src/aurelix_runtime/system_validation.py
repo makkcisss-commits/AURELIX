@@ -64,6 +64,9 @@ class SystemValidation:
             "evaluation": fabric.evaluation is self.factory.evaluation,
             "opportunity": fabric.opportunity is self.factory.opportunity,
             "business": fabric.business is self.factory.business,
+            "experiment_runner": fabric.experiment_runner is self.factory.experiment_runner,
+            "adaptive_loop": fabric.adaptive_loop is self.factory.adaptive_loop,
+            "capability_escalator": fabric.capability_escalator is self.factory.capability_escalator,
         }
         return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
 
@@ -78,7 +81,10 @@ class SystemValidation:
             return {"status": "failed", "reason": "real_experiment_executor_missing"}
         if "experiment.run" not in handlers:
             return {"status": "failed", "reason": "experiment_run_job_not_registered"}
-        return {"status": "ok", "runner": type(runner).__name__, "executor_configured": True, "job_registered": True}
+        fabric = getattr(self.factory, "autonomy_fabric", None)
+        if fabric is not None and fabric.experiment_runner is not runner:
+            return {"status": "failed", "reason": "autonomy_fabric_runner_not_canonical"}
+        return {"status": "ok", "runner": type(runner).__name__, "executor_configured": True, "job_registered": True, "canonical": True}
 
     def _economic_feedback(self) -> dict[str, Any]:
         context = self.factory.economic_learning_context()
