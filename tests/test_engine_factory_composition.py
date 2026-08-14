@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
 from aurelix_runtime.runtime import RuntimeConfig
 
@@ -8,6 +10,47 @@ def test_engine_factory_uses_runtime_store_for_knowledge(tmp_path):
         assert factory.knowledge.store is factory.runtime.store
         assert "autonomy.run" in factory.runtime.claimed_handlers
         assert factory.runtime.store.path == str(tmp_path / "aurelix.db")
+    finally:
+        factory.runtime.close()
+
+
+def test_autonomy_and_enterprise_share_the_same_composition(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=True))
+    try:
+        fabric = factory.autonomy_fabric
+        assert fabric is not None
+        assert fabric.engines is factory.enterprise.store
+        assert fabric.message_fabric is factory.message_fabric
+        assert fabric.research is factory.research
+        assert fabric.academy is factory.academy
+        assert fabric.knowledge is factory.knowledge_engine
+        assert fabric.innovation is factory.innovation
+        assert fabric.experiment is factory.experiment
+        assert fabric.evaluation is factory.evaluation
+        assert fabric.opportunity is factory.opportunity
+        assert fabric.business is factory.business
+    finally:
+        factory.runtime.close()
+
+
+def test_system_validation_catches_and_accepts_canonical_composition(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=True))
+    try:
+        report = factory.validate_system()
+        checks = {item["name"]: item for item in report["checks"]}
+        assert checks["canonical_composition"]["status"] == "ok"
+        assert checks["economic_feedback"]["status"] == "ok"
+    finally:
+        factory.runtime.close()
+
+
+def test_economic_feedback_does_not_claim_verified_revenue_without_observation(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=False))
+    try:
+        context = factory.economic_learning_context()
+        assert context["daily_realized_eur"] == Decimal("0")
+        assert context["verified_financial_outcome"] is False
+        assert context["productive_sources"] == 0
     finally:
         factory.runtime.close()
 
