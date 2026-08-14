@@ -1,13 +1,33 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from aurelix_core.economic_feedback import EconomicFeedback
 from aurelix_core.economic_learning_adapter import EconomicLearningAdapter
 
 
-def test_economic_learning_exposes_only_observed_outcomes(portfolio, active_source):
-    active_source.realized_daily_eur = Decimal("12.50")
-    active_source.expected_daily_eur = Decimal("20.00")
-    portfolio.add(active_source)
+class InMemoryPortfolio:
+    def __init__(self, sources):
+        self._sources = list(sources)
+
+    def add(self, source):
+        self._sources.append(source)
+
+    def all(self):
+        return list(self._sources)
+
+
+def make_source(*, observed="12.50", expected="20.00", active=True):
+    return SimpleNamespace(
+        source_id="activity-1",
+        realized_daily_eur=Decimal(observed),
+        expected_daily_eur=Decimal(expected),
+        status=SimpleNamespace(value="active" if active else "paused"),
+    )
+
+
+def test_economic_learning_exposes_only_observed_outcomes():
+    portfolio = InMemoryPortfolio([])
+    portfolio.add(make_source())
 
     adapter = EconomicLearningAdapter(EconomicFeedback(portfolio))
     evidence = adapter.evidence()
@@ -18,8 +38,8 @@ def test_economic_learning_exposes_only_observed_outcomes(portfolio, active_sour
     assert evidence[0].realization_ratio == Decimal("0.625")
 
 
-def test_learning_context_cannot_authorize_execution(portfolio, active_source):
-    portfolio.add(active_source)
+def test_learning_context_cannot_authorize_execution():
+    portfolio = InMemoryPortfolio([make_source()])
     context = EconomicLearningAdapter(EconomicFeedback(portfolio)).learning_context()
 
     assert context["verified_financial_outcome"] is True
