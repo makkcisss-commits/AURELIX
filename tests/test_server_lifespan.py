@@ -30,7 +30,7 @@ def test_lifespan_owns_long_running_system(monkeypatch):
     monkeypatch.setattr(server, "_system_thread", None)
 
     with TestClient(server.app):
-        assert fake.scheduled == [("default-autonomy", 30.0, "test objective")]
+        assert fake.scheduled == [("economic-discovery", 30.0, "test objective")]
         assert fake.started == 1
         assert server._system_thread is not None
 
