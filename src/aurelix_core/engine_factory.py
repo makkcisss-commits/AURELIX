@@ -15,6 +15,7 @@ from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
 from .policy import PolicyEngine
 from .revenue_portfolio import RevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
+from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.integrated_engines import (
     AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
@@ -24,6 +25,7 @@ from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledge
 from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
+from aurelix_runtime.message_fabric import MessageFabric
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
@@ -45,8 +47,6 @@ class EngineFactory:
                  knowledge: KnowledgeRepository | None = None, repository=None):
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
-        if self.config.register_autonomy:
-            self.runtime.register_autonomy()
         self.policy_engine = PolicyEngine()
         self.audit = AuditLog()
         self.governor = Governor(policy=self.policy_engine, audit=self.audit)
@@ -83,6 +83,25 @@ class EngineFactory:
             opportunity=self.opportunity,
             business=self.business,
         )
+        self.message_fabric = MessageFabric()
+        self.autonomy_fabric = None
+        if self.config.register_autonomy:
+            # Mount the runtime worker on the exact same engines and EngineStore
+            # used by EnterpriseLoop. This prevents a second hidden composition.
+            self.autonomy_fabric = AutonomyFabric(
+                store=self.runtime.store,
+                engine_store=self.enterprise.store,
+                research=self.research,
+                academy=self.academy,
+                knowledge=self.knowledge_engine,
+                innovation=self.innovation,
+                experiment=self.experiment,
+                evaluation=self.evaluation,
+                opportunity=self.opportunity,
+                business=self.business,
+                message_fabric=self.message_fabric,
+            )
+            self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         self.experiment_runner = self.runtime.create_experiment_runner()
         self.core_evaluation = CoreEvaluationEngine()
         self.diagnostics = SystemDiagnostics(self)
