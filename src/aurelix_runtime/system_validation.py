@@ -28,6 +28,7 @@ class SystemValidation:
             "runtime": self._runtime,
             "engine_factory": self._factory,
             "canonical_composition": self._composition,
+            "durable_experiment_execution": self._experiment_execution,
             "economic_feedback": self._economic_feedback,
             "knowledge_store": self._knowledge,
         }
@@ -65,6 +66,19 @@ class SystemValidation:
             "business": fabric.business is self.factory.business,
         }
         return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
+
+    def _experiment_execution(self) -> dict[str, Any]:
+        runner = getattr(self.factory, "experiment_runner", None)
+        executor = getattr(self.factory, "experiment_executor", None)
+        runtime = getattr(self.factory, "runtime", None)
+        registered = getattr(runtime, "_experiment_runner", None) if runtime is not None else None
+        if runner is None:
+            return {"status": "failed", "reason": "experiment_runner_missing"}
+        if executor is None:
+            return {"status": "failed", "reason": "real_experiment_executor_missing"}
+        if registered is not runner:
+            return {"status": "failed", "reason": "runtime_experiment_runner_not_canonical"}
+        return {"status": "ok", "runner": type(runner).__name__, "executor_configured": True}
 
     def _economic_feedback(self) -> dict[str, Any]:
         context = self.factory.economic_learning_context()
