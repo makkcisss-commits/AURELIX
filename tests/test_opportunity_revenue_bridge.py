@@ -2,6 +2,8 @@ from decimal import Decimal
 
 import pytest
 
+from aurelix_core.economic_opportunity_validation import qualify_opportunity
+from aurelix_core.evidence import EvidenceRelation, make_evidence
 from aurelix_core.opportunities import OpportunityStage, build_opportunity
 from aurelix_core.opportunity_revenue_bridge import OpportunityRevenueBridge, SourceStage
 
@@ -20,9 +22,32 @@ def approved_opportunity():
     return opportunity.__class__(**{**opportunity.__dict__, "stage": OpportunityStage.APPROVED})
 
 
-def test_admit_creates_accountable_validation_source():
+def qualification_for(opportunity):
+    evidence = lambda claim, ref: make_evidence(
+        source_ref=ref,
+        claim=claim,
+        relation=EvidenceRelation.SUPPORTS,
+        quality=Decimal("0.9"),
+    )
+    return qualify_opportunity(
+        opportunity,
+        evidence_by_claim={
+            "demand": [evidence("demand", "prospect-1")],
+            "monetization_path": [evidence("monetization_path", "offer-1")],
+            "source_reality": [evidence("source_reality", "source-1")],
+        },
+    )
+
+
+def test_admit_requires_matching_evidence_qualification():
     bridge = OpportunityRevenueBridge()
-    source = bridge.admit(approved_opportunity(), owner_role="business", channel="direct")
+    opportunity = approved_opportunity()
+    source = bridge.admit(
+        opportunity,
+        qualification=qualification_for(opportunity),
+        owner_role="business",
+        channel="direct",
+    )
     assert source.stage is SourceStage.VALIDATING
     assert source.owner_role == "business"
     assert source.expected_daily_eur == Decimal("3")
@@ -30,7 +55,13 @@ def test_admit_creates_accountable_validation_source():
 
 def test_observed_revenue_activates_source():
     bridge = OpportunityRevenueBridge()
-    source = bridge.admit(approved_opportunity(), owner_role="business", channel="direct")
+    opportunity = approved_opportunity()
+    source = bridge.admit(
+        opportunity,
+        qualification=qualification_for(opportunity),
+        owner_role="business",
+        channel="direct",
+    )
     updated = bridge.record_observation(source.source_id, Decimal("1.25"), external_reference="txn-1")
     assert updated.stage is SourceStage.ACTIVE
     assert updated.observed_daily_eur == Decimal("1.25")
@@ -39,9 +70,20 @@ def test_observed_revenue_activates_source():
 
 def test_replacement_keeps_chain_traceable():
     bridge = OpportunityRevenueBridge()
-    old = bridge.admit(approved_opportunity(), owner_role="business", channel="direct")
+    opportunity = approved_opportunity()
+    old = bridge.admit(
+        opportunity,
+        qualification=qualification_for(opportunity),
+        owner_role="business",
+        channel="direct",
+    )
     bridge.degrade(old.source_id)
-    replacement = bridge.admit(approved_opportunity(), owner_role="business", channel="affiliate")
+    replacement = bridge.admit(
+        opportunity,
+        qualification=qualification_for(opportunity),
+        owner_role="business",
+        channel="affiliate",
+    )
     retired, promoted = bridge.replace(old.source_id, replacement)
     assert retired.stage is SourceStage.REPLACED
     assert promoted.replacement_for == old.source_id
@@ -55,4 +97,24 @@ def test_unapproved_opportunity_cannot_be_admitted():
         confidence=Decimal("0.5"),
     )
     with pytest.raises(ValueError):
-        bridge.admit(opportunity, owner_role="business", channel="direct")
+        bridge.admit(
+            opportunity,
+            qualification=qualification_for(opportunity),
+            owner_role="business",
+            channel="direct",
+        )
+
+
+def test_unqualified_opportunity_cannot_enter_revenue_pipeline():
+    bridge = OpportunityRevenueBridge()
+    opportunity = approved_opportunity()
+    with pytest.raises(ValueError):
+        bridge.admit(
+            opportunity,
+            qualification=qualification_for(opportunity.__class__(**{
+                **opportunity.__dict__,
+                "confidence": Decimal("0"),
+            })),
+            owner_role="business",
+            channel="direct",
+        )
