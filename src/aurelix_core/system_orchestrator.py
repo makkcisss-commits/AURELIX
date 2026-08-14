@@ -132,7 +132,11 @@ class SystemOrchestrator:
         if not knowledge_id or not lessons:
             return {"status": "awaiting_knowledge", "knowledge_id": knowledge_id, "objective": objective}
 
-        source_refs = [str(getattr(item, "source", "")) for item in evidence if getattr(item, "source", "")]
+        source_refs = []
+        for item in evidence:
+            source = item.get("source") if isinstance(item, dict) else getattr(item, "source", "")
+            if source:
+                source_refs.append(str(source))
         curated = self.curated_academy.create_knowledge(
             title=f"AURELIX Academy: {objective[:120]}",
             summary="\n".join(lessons),
