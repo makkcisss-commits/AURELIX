@@ -9,13 +9,23 @@ from aurelix_runtime.persistence import RuntimeStore
 def test_unknown_runtime_capability_is_blocked_and_escalated(tmp_path: Path) -> None:
     store = RuntimeStore(tmp_path / "aurelix.db")
     intelligence = ContinuousIntelligence()
-    fabric = AutonomyFabric(store=store, capability_escalator=CapabilityEscalator(intelligence))
+    fabric = AutonomyFabric(
+        store=store,
+        capability_escalator=CapabilityEscalator(intelligence),
+    )
     run = fabric.run("find a real opportunity", required_capabilities=["crm-write"])
+
     assert run.status == "capability_learning_required"
     assert run.business["status"] == "blocked"
     assert run.academy["status"] == "learning_required"
     assert run.academy["capability_gaps"]
     assert len(intelligence.objectives) == 1
     assert store.get(run.execution_id).status == "completed"
-    assert any(event["event"] == "autonomy.capability_escalated" for event in store.audit_summary())
+
+    audit = store.audit_summary()
+    assert audit["total"] >= 1
+    assert any(
+        event["event_type"] == "autonomy.capability_escalated"
+        for event in audit["recent"]
+    )
     fabric.close()
