@@ -6,7 +6,7 @@ Governor/ControlPlane/ExecutionGate boundaries.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -52,7 +52,7 @@ class SystemOrchestrator:
             raise ValueError("objective is required")
 
         enterprise = self.factory.run_enterprise_cycle(objective, approved=False)
-        enterprise_dict = asdict(enterprise)
+        enterprise_dict = asdict(enterprise) if is_dataclass(enterprise) else dict(enterprise.__dict__)
         academy_payload = enterprise_dict["academy"]
         knowledge_payload = enterprise_dict["knowledge"]
 
