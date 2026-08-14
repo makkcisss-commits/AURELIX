@@ -103,11 +103,19 @@ class AurelixRuntime:
     def register_experiment(self, experiment: Experiment) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self.store.lock, self.store.db:
-            self.store.db.execute("""INSERT INTO experiments(experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at)
+            existing = self.store.db.execute(
+                "SELECT status, result FROM experiments WHERE experiment_id=?",
+                (experiment.id,),
+            ).fetchone()
+            if existing is not None and existing["status"] == "complete" and existing["result"] is not None:
+                return
+            self.store.db.execute(
+                """INSERT INTO experiments(experiment_id,hypothesis,success_criteria,status,result,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,?) ON CONFLICT(experiment_id) DO UPDATE SET hypothesis=excluded.hypothesis,
                 success_criteria=excluded.success_criteria,status=excluded.status,result=excluded.result,updated_at=excluded.updated_at""",
                 (experiment.id, experiment.hypothesis, json.dumps(experiment.success_criteria), experiment.status,
-                 json.dumps(experiment.result) if experiment.result is not None else None, now, now))
+                 json.dumps(experiment.result) if experiment.result is not None else None, now, now),
+            )
 
     def record_observation(self, experiment_id: str, observation: dict[str, Any]) -> str:
         observation_id = str(uuid4())
@@ -182,9 +190,13 @@ class AurelixRuntime:
     def submit_experiment(self, experiment: Experiment, kind: str = "experiment.run") -> str:
         if kind not in self.handlers and kind not in self.claimed_handlers:
             raise ValueError(f"unregistered job kind: {kind}")
+        existing = next((item for item in self.query_experiments() if item["experiment_id"] == experiment.id), None)
+        if existing is not None and existing["status"] == "complete" and existing["result"] is not None:
+            raise ValueError(f"experiment {experiment.id} is already complete and cannot be resubmitted")
         self.register_experiment(experiment)
-        record = self.store.enqueue(kind, {"experiment_id": experiment.id}, execution_id=experiment.id)
-        self.store.audit("experiment.queued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id})
+        execution_id = experiment.id if existing is None else f"{experiment.id}:retry:{uuid4()}"
+        record = self.store.enqueue(kind, {"experiment_id": experiment.id}, execution_id=execution_id)
+        self.store.audit("experiment.queued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id, "execution_id": execution_id})
         return record.job_id
 
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
