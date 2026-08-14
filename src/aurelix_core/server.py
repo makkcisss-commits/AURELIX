@@ -127,7 +127,10 @@ async def lifespan(app: FastAPI):
                 "AURELIX_AUTONOMY_OBJECTIVE",
                 "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
             )
-            _system.schedule_system_cycle("default-autonomy", interval, objective)
+            # EngineFactory already installs the canonical economic-discovery
+            # schedule. Re-registering that same identity updates it rather than
+            # creating a second autonomous economic loop.
+            _system.schedule_system_cycle("economic-discovery", interval, objective)
             thread = _system_thread
             if thread is None or not thread.is_alive():
                 _system_thread = threading.Thread(target=_system.run_forever, name="aurelix-system", daemon=True)
@@ -216,7 +219,7 @@ def knowledge(q: str = "", limit: int = 20, request: ReadOnlyRequest = Depends(r
 def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
     response = _api.get_audit(request, limit)
     if response.status != 200:
-        raise HTTPException(status_code=response.status, detail=response.body["error"])
+        raise HTTPException(status_code=403, detail=response.body["error"])
     return response.body
 
 
@@ -258,43 +261,3 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
         }
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"economic_outcome_rejected: {type(exc).__name__}") from exc
-
-
-@app.post("/v1/actions/experiments/{experiment_id}/execute")
-def execute_experiment(experiment_id: str, payload: ExperimentExecutionRequest, request: ReadOnlyRequest = Depends(require_owner)):
-    if _flow is None:
-        raise HTTPException(status_code=503, detail="runtime_unavailable")
-    try:
-        return _flow.execute_experiment(experiment_id, payload.observations)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"experiment_execution_failed: {type(exc).__name__}") from exc
-
-
-@app.post("/v1/system/developer/plan")
-def developer_plan(payload: DevelopmentRequest, request: ReadOnlyRequest = Depends(require_owner)):
-    if _factory is None:
-        raise HTTPException(status_code=503, detail="runtime_unavailable")
-    return _factory.plan_system_change(payload.objective, payload.scope or None)
-
-
-@app.post("/v1/system/developer/approve")
-def developer_approve(payload: DevelopmentApprovalRequest, request: ReadOnlyRequest = Depends(require_owner)):
-    if _factory is None:
-        raise HTTPException(status_code=503, detail="runtime_unavailable")
-    return _factory.system_developer.approve(payload.plan, payload.approved)
-
-
-_WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
-if _WEB_ROOT.is_dir():
-    app.mount("/", StaticFiles(directory=_WEB_ROOT, html=True), name="web")
-
-
-def main() -> None:
-    import uvicorn
-    uvicorn.run("aurelix_core.server:app", host=os.getenv("AURELIX_HOST", "127.0.0.1"), port=int(os.getenv("AURELIX_PORT", "8000")), reload=False)
-
-
-if __name__ == "__main__":
-    main()
