@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .academy_agent import AcademyAgent
 from .adaptive_loop import AdaptiveLoop
@@ -21,8 +21,9 @@ from .revenue_portfolio import RevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
+from aurelix_runtime.experiment_runner import ExperimentRunner
 from aurelix_runtime.integrated_engines import (
-    AcademyEngine, BusinessEngine, EvaluationEngine, ExperimentEngine,
+    AcademyEngine, BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine,
     InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine,
 )
 from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledgeRepository
@@ -37,10 +38,14 @@ from aurelix_runtime.system_developer import SystemDeveloper
 from aurelix_runtime.system_validation import SystemValidation
 
 
+ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
+
+
 @dataclass(frozen=True)
 class EngineFactoryConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     register_autonomy: bool = True
+    experiment_executor: ExperimentExecutor | None = None
 
 
 class EngineFactory:
@@ -48,7 +53,8 @@ class EngineFactory:
 
     def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None,
                  model_provider: ModelProvider | None = None, research_provider=None,
-                 knowledge: KnowledgeRepository | None = None, repository=None):
+                 knowledge: KnowledgeRepository | None = None, repository=None,
+                 experiment_executor: ExperimentExecutor | None = None):
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self.policy_engine = PolicyEngine()
@@ -110,7 +116,11 @@ class EngineFactory:
                 adaptive_loop=self.adaptive_loop,
             )
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
-        self.experiment_runner = self.runtime.create_experiment_runner()
+        configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
+        self.experiment_executor = configured_executor
+        self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
+        if configured_executor is not None:
+            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner)
         self.core_evaluation = CoreEvaluationEngine()
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
@@ -178,17 +188,3 @@ class EngineFactory:
 
     def self_improvement_prepare(self, objective: str, scope: list[str] | None = None):
         return self.self_improvement.prepare(objective, scope)
-
-    def self_improvement_execute(self, plan: dict[str, Any], *, approved: bool = False):
-        return self.self_improvement.execute_and_verify(plan, approved=approved)
-
-    def economic_snapshot(self):
-        return self.economic_feedback.snapshot()
-
-    def economic_learning_context(self):
-        return self.economic_feedback.learning_context()
-
-    def generate(self, prompt: str, *, action: str = "engine.generate", actor_id: str = "engine") -> str:
-        if self.model_gateway is None:
-            raise RuntimeError("AURELIX_MODEL_BASE_URL is not configured")
-        return self.model_gateway.generate(GenerationRequest(prompt=prompt, action=action, actor_id=actor_id))
