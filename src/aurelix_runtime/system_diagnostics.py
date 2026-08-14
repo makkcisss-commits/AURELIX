@@ -29,6 +29,7 @@ class SystemDiagnostics:
         checks: list[DiagnosticCheck] = [
             self._check("runtime", self._runtime),
             self._check("canonical_composition", self._canonical_composition),
+            self._check("experiment_execution", self._experiment_execution),
             self._check("economic_feedback", self._economic_feedback),
             self._check("live_opportunity_readiness", self._live_opportunity_readiness),
             self._check("model_provider", lambda: self._provider("model_provider")),
@@ -76,10 +77,32 @@ class SystemDiagnostics:
             "business": fabric.business is self.factory.business,
             "engine_store": fabric.engines is enterprise.store,
             "message_fabric": fabric.message_fabric is self.factory.message_fabric,
+            "capability_escalator": fabric.capability_escalator is self.factory.capability_escalator,
+            "adaptive_loop": fabric.adaptive_loop is self.factory.adaptive_loop,
         }
         if not all(shared_engines.values()):
             return DiagnosticCheck("canonical_composition", "failed", "high", "multiple composition instances detected", shared_engines)
         return DiagnosticCheck("canonical_composition", "ok", "info", "runtime autonomy and enterprise loop share one composition", shared_engines)
+
+    def _experiment_execution(self) -> DiagnosticCheck:
+        executor = getattr(self.factory, "experiment_executor", None)
+        if executor is None:
+            return DiagnosticCheck(
+                "experiment_execution", "failed", "high",
+                "no real experiment executor is mounted; experiments cannot produce measurements",
+                {"configured": False, "validation_allowed": False},
+            )
+        if not callable(executor):
+            return DiagnosticCheck(
+                "experiment_execution", "failed", "high",
+                "experiment executor is configured but not callable",
+                {"configured": True, "callable": False},
+            )
+        return DiagnosticCheck(
+            "experiment_execution", "ok", "info",
+            "a real experiment executor is mounted through the composition root",
+            {"configured": True, "callable": True, "validation_allowed": True},
+        )
 
     def _economic_feedback(self) -> DiagnosticCheck:
         context = self.factory.economic_learning_context()
