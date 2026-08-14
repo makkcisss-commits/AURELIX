@@ -80,7 +80,9 @@ class AurelixRuntime:
         """Mount the full research→knowledge→experiment→business fabric on this runtime."""
         from .autonomy_fabric import AutonomyFabric
 
-        fabric = AutonomyFabric(store=self.store, message_fabric=message_fabric)
+        fabric = AutonomyFabric(store=self.store) if message_fabric is None else AutonomyFabric(
+            store=self.store, message_fabric=message_fabric
+        )
 
         def handle(record: JobRecord) -> Any:
             return fabric.run_claimed(record)
