@@ -15,6 +15,6 @@ def test_system_scheduler_runs_cycle_on_shared_runtime(tmp_path):
         system.tick()
         assert calls == ["maintain the system"]
         assert system.health()["system_cycle"] == "registered"
-        assert system.health()["schedules"] == ["test-cycle"]
+        assert "test-cycle" in system.health()["schedules"]
     finally:
         system.close()

@@ -56,6 +56,7 @@ class RuntimeStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
                 CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_until);
                 CREATE INDEX IF NOT EXISTS idx_observations_experiment ON observations(experiment_id, recorded_at);
+                CREATE VIEW IF NOT EXISTS audit_log AS SELECT event_id, job_id, event_type, payload, created_at FROM audit_events;
             """)
             self._migrate_jobs_schema()
 

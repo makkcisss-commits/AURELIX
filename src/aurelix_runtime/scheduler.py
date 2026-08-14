@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from .job_queue import PersistentJobQueue
 from .job_runner import AutonomyJobRunner
@@ -24,17 +24,23 @@ class SchedulerConfig:
 
 
 class Scheduler:
-    """Scheduler feeding the same durable runtime when a Runtime.submit is supplied."""
+    """Scheduler feeding the canonical durable runtime without bypassing system governance."""
 
-    APPROVED_JOB_KINDS = frozenset({"research_pipeline", "autonomy.run", "pipeline.run"})
+    APPROVED_JOB_KINDS = frozenset({"research_pipeline", "autonomy.run", "pipeline.run", "system.cycle"})
 
     def __init__(self, submit: Callable[[str, dict[str, str]], str] | None = None,
                  queue: PersistentJobQueue | None = None,
                  config: SchedulerConfig | None = None) -> None:
         self.config = config or SchedulerConfig()
         self.submit = submit or self._submit
-        self._runtime = getattr(submit, "__self__", None) if submit is not None else None
-        self.queue = queue or (PersistentJobQueue(store=self._runtime.store) if self._runtime is not None and hasattr(self._runtime, "store") else PersistentJobQueue())
+        owner = getattr(submit, "__self__", None) if submit is not None else None
+        # A system composition root owns the scheduler submission boundary, while
+        # the durable Runtime remains the execution engine. Resolve it explicitly
+        # so Scheduler.tick() never silently falls back to an in-memory queue.
+        self._runtime = getattr(owner, "runtime", owner) if owner is not None else None
+        self.queue = queue or (PersistentJobQueue(store=self._runtime.store)
+                               if self._runtime is not None and hasattr(self._runtime, "store")
+                               else PersistentJobQueue())
         self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
         self._stop = threading.Event()

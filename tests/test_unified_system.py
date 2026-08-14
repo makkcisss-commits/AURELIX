@@ -18,7 +18,9 @@ def test_unified_system_uses_one_store_and_executes_scheduled_autonomy(tmp_path:
         assert system.health()["store"] == "shared"
         job_id = system.submit("autonomy.run", {"objective": "direct integration"})
         dispatched = system.tick()
-        assert dispatched.count("runtime") == 2
+        # The autonomous economic-discovery schedule is enabled by default, so
+        # this tick dispatches the direct job plus both due autonomy schedules.
+        assert dispatched.count("runtime") == 3
         result = system.store.get_result(job_id)
         assert result is not None
         assert result["execution_id"] == job_id
