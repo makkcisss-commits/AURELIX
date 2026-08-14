@@ -13,7 +13,6 @@ from .integrated_engines import Experiment
 from .persistence import JobRecord, LeaseLostError, RuntimeStore
 from .pipeline_runner import GovernedPipeline
 
-
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
 
 
@@ -72,14 +71,12 @@ class AurelixRuntime:
         self.claimed_handlers.pop(kind, None)
 
     def register_claimed(self, kind: str, handler: Callable[[JobRecord], Any]) -> None:
-        """Register a handler that executes the current claim, not a nested job."""
         if not kind.strip():
             raise ValueError("job kind is required")
         self.claimed_handlers[kind] = handler
         self.handlers.pop(kind, None)
 
     def register_autonomy(self, kind: str = "autonomy.run") -> None:
-        """Mount the full research→knowledge→experiment→business fabric on this runtime."""
         from .autonomy_fabric import AutonomyFabric
         fabric = AutonomyFabric(store=self.store)
         self.register_claimed(kind, fabric.run_claimed)
@@ -140,8 +137,10 @@ class AurelixRuntime:
             existing = self.query_experiment_observations(experiment.id)
             if existing:
                 return existing
+            # No executor means the system is safely waiting for a real measurement source.
+            # It is never converted into a synthetic observation.
             if executor is None:
-                raise RuntimeError("experiment executor unavailable; no measurement may be fabricated")
+                return []
             observations = executor(experiment)
             if observations:
                 for observation in observations:
@@ -152,8 +151,9 @@ class AurelixRuntime:
 
         def on_complete(experiment: Experiment, run) -> None:
             self.register_experiment(experiment)
-            outcome = "succeeded" if experiment.result and experiment.result.get("passed") else "evaluated"
-            self.store.audit("experiment.evaluated", "experiment-runner", experiment.id, outcome,
+            event = "experiment.evaluated" if run.status == "complete" else "experiment.awaiting_measurement"
+            outcome = "succeeded" if experiment.result and experiment.result.get("passed") else "awaiting" if run.status != "complete" else "evaluated"
+            self.store.audit(event, "experiment-runner", experiment.id, outcome,
                              {"status": experiment.status, "run_status": run.status, "result": experiment.result or {}})
 
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
@@ -172,11 +172,10 @@ class AurelixRuntime:
         self.register(kind, handle)
         return runner
 
-    def _find_experiment_job(self, experiment_id: str, *, include_terminal: bool = True) -> JobRecord | None:
+    def _find_experiment_job(self, experiment_id: str) -> JobRecord | None:
         with self.store.lock:
             row = self.store.db.execute(
-                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? "
-                + ("ORDER BY created_at DESC LIMIT 1" if include_terminal else "AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1"),
+                "SELECT * FROM jobs WHERE name=? AND json_extract(payload, '$.experiment_id')=? ORDER BY created_at DESC LIMIT 1",
                 ("experiment.run", experiment_id),
             ).fetchone()
         return self.store._record(row) if row is not None else None
