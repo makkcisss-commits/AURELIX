@@ -62,7 +62,8 @@ class AutonomyFabric:
                  opportunity: OpportunityEngine | None = None, business: BusinessEngine | None = None,
                  message_fabric: MessageFabric | None = None,
                  capability_escalator: CapabilityEscalator | None = None,
-                 adaptive_loop: AdaptiveLoop | None = None) -> None:
+                 adaptive_loop: AdaptiveLoop | None = None,
+                 experiment_runner: ExperimentRunner | None = None) -> None:
         self.store = store or RuntimeStore()
         self.message_fabric = message_fabric or MessageFabric()
         self.knowledge_repository = SQLiteKnowledgeRepository(self.store)
@@ -78,7 +79,7 @@ class AutonomyFabric:
         self.business = business or BusinessEngine(require_approval=True)
         self.capability_escalator = capability_escalator
         self.adaptive_loop = adaptive_loop
-        self.experiment_runner = ExperimentRunner(collector=self._collect_observations, on_complete=self._persist_experiment)
+        self.experiment_runner = experiment_runner or ExperimentRunner(collector=self._collect_observations, on_complete=self._persist_experiment)
 
     def _emit(self, topic: str, sender: str, execution_id: str, payload: dict[str, Any], *, causation_id: str | None = None) -> None:
         self.message_fabric.publish(AgentMessage(
