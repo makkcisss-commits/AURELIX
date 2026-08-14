@@ -16,7 +16,7 @@ from .academy_intelligence_bridge import AcademyIntelligenceBridge
 from .continuous_intelligence import ContinuousIntelligence
 from .economic_attribution import EconomicAttribution, EconomicAttributionLedger
 from .governor import Governor
-from .learning import LearningEngine
+from .learning import LearningEngine, Outcome
 from .verified_economic_learning import VerifiedEconomicLearning
 
 
@@ -116,6 +116,7 @@ class SystemOrchestrator:
         return {
             "runtime": runtime.store.status(),
             "economic_learning": self.verified_learning.learning_context(),
+            "learning_items": len(self.learning._items),
             "proposal_count": len(self._proposals),
             "intelligence": {
                 "domains": len(self.intelligence.domains),
@@ -181,8 +182,41 @@ class SystemOrchestrator:
 
     def _emit_economic_learning(self) -> dict[str, Any]:
         fresh = self.verified_learning.emit()
+        learning_items = []
+        for signal in fresh:
+            outcome = Outcome.SUCCESS if signal.observed_daily_eur > 0 else Outcome.FAILURE
+            observation = (
+                f"Observed {signal.observed_daily_eur} EUR/day versus expected "
+                f"{signal.expected_daily_eur} EUR/day; variance {signal.variance_daily_eur} EUR/day."
+            )
+            learning = self.learning.record(
+                experiment_id=f"economic:{signal.opportunity_id}:{signal.source_id}",
+                outcome=outcome,
+                observation=observation,
+                evidence_refs=[
+                    signal.opportunity_id,
+                    signal.source_id,
+                    signal.governor_decision_id,
+                    *([signal.external_reference] if signal.external_reference else []),
+                ],
+                confidence=1.0,
+            )
+            learning_items.append({
+                "learning_id": learning.learning_id,
+                "experiment_id": learning.experiment_id,
+                "outcome": learning.outcome.value,
+                "evidence_refs": list(learning.evidence_refs),
+            })
+
+        context = self.verified_learning.learning_context()
+        context["learning_item_count"] = len(learning_items)
+        context["rule"] = (
+            "only verified realized economics may become learning evidence; "
+            "learning remains observational and cannot authorize execution"
+        )
         return {
             "new_signals": len(fresh),
+            "learning_items": learning_items,
             "signals": [
                 {
                     "opportunity_id": signal.opportunity_id,
@@ -198,7 +232,7 @@ class SystemOrchestrator:
                 }
                 for signal in fresh
             ],
-            "context": self.verified_learning.learning_context(),
+            "context": context,
         }
 
     def _diagnostics(self) -> dict[str, Any]:
