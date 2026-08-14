@@ -69,11 +69,6 @@ class OpportunityExecutionBridge:
                 opportunity.opportunity_id, route, False, None, None, Decimal("0")
             )
 
-        source: RevenueSource = self.revenue.admit(
-            opportunity,
-            owner_role=owner_role,
-            channel=channel,
-        )
         request = ExecutionRequest(
             actor_id=actor_id,
             resource=ResourceRequest(
@@ -84,8 +79,14 @@ class OpportunityExecutionBridge:
             ),
             permission=permission,
         )
-        # Fail closed before invoking the caller-supplied operation.
+        # Fail closed before creating any revenue-side state or invoking the operation.
         authorize_resource(request.resource, permission)
+
+        source: RevenueSource = self.revenue.admit(
+            opportunity,
+            owner_role=owner_role,
+            channel=channel,
+        )
         result = self.runtime.execute(request, operation)
 
         observed = Decimal("0")
