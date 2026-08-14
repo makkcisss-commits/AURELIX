@@ -2,6 +2,25 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 
+def test_unified_system_cycle_uses_canonical_shared_intelligence(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURELIX_MODE", "development")
+
+    from aurelix_core.engine_factory import EngineFactory, EngineFactoryConfig
+    from aurelix_runtime.runtime import RuntimeConfig
+
+    factory = EngineFactory(
+        EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")))
+    )
+    try:
+        assert factory.system_orchestrator.intelligence is factory.continuous_intelligence
+        assert factory.system_orchestrator.adaptive_loop is factory.adaptive_loop
+        assert factory.autonomy_fabric is not None
+        assert factory.autonomy_fabric.adaptive_loop is factory.adaptive_loop
+        assert factory.autonomy_fabric.capability_escalator is factory.capability_escalator
+    finally:
+        factory.runtime.close()
+
+
 def test_unified_system_cycle_connects_intelligence_and_governance(monkeypatch, tmp_path):
     monkeypatch.setenv("AURELIX_MODE", "development")
 
