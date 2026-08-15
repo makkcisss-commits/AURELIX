@@ -17,7 +17,9 @@ from .governor import Governor
 from .audit import AuditLog
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
+from .opportunity_revenue_bridge import OpportunityRevenueBridge
 from .policy import PolicyEngine
+from .revenue import RevenueEngine
 from .revenue_portfolio import RevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
@@ -74,6 +76,8 @@ class EngineFactory:
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
         self.business = BusinessEngine(require_approval=True)
+        self.revenue = RevenueEngine()
+        self.opportunity_revenue_bridge = OpportunityRevenueBridge(self.revenue)
         self.revenue_portfolio = RevenuePortfolio()
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
