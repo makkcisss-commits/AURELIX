@@ -98,13 +98,13 @@ class AutonomyFabric:
             if not self.store.heartbeat(execution_id, worker_id, lease_token):
                 return
 
-    def _capability_learning_result(self, claimed: JobRecord, required_capabilities: list[str]) -> AutonomyRun:
+    def _capability_learning_result(self, claimed: JobRecord, required_capabilities: list[str], mission_id: str) -> AutonomyRun:
         unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
         if not unknown:
             raise ValueError("capability learning requested without an unknown capability")
         gaps = []
         if self.capability_escalator is None:
-            self.store.record_audit(claimed.job_id, "autonomy.capability_escalation_unavailable", {"capabilities": unknown})
+            self.store.record_audit(claimed.job_id, "autonomy.capability_escalation_unavailable", {"capabilities": unknown, "mission_id": mission_id})
             status = "capability_escalation_unavailable"
             academy = {"status": "blocked", "capability_gaps": unknown}
         else:
@@ -115,10 +115,10 @@ class AutonomyFabric:
                 else:
                     gap, objective = self.capability_escalator.escalate(capability=capability, reason="required capability is not validated by the runtime", requested_by=claimed.worker_id or "autonomy")
                 gaps.append({"gap_id": gap.gap_id, "capability": gap.capability, "study_objective_id": objective.objective_id})
-                self.store.record_audit(claimed.job_id, "autonomy.capability_escalated", gaps[-1])
+                self.store.record_audit(claimed.job_id, "autonomy.capability_escalated", {**gaps[-1], "mission_id": mission_id})
             status = "capability_learning_required"
             academy = {"status": "learning_required", "capability_gaps": gaps}
-        result = {"execution_id": claimed.job_id, "status": status, "research": {"status": "not_started"}, "academy": academy, "knowledge": {"status": "blocked"}, "innovation": {"status": "blocked"}, "experiment": {"status": "blocked"}, "evaluation": {"status": "blocked"}, "opportunity": {"status": "blocked"}, "business": {"status": "blocked", "reason": "required capability is not validated"}, "mission_id": ""}
+        result = {"execution_id": claimed.job_id, "status": status, "research": {"status": "not_started"}, "academy": academy, "knowledge": {"status": "blocked"}, "innovation": {"status": "blocked"}, "experiment": {"status": "blocked"}, "evaluation": {"status": "blocked"}, "opportunity": {"status": "blocked"}, "business": {"status": "blocked", "reason": "required capability is not validated"}, "mission_id": mission_id}
         self.store.complete(claimed.job_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
         return AutonomyRun(**result)
 
@@ -130,21 +130,22 @@ class AutonomyFabric:
         if not objective:
             raise ValueError("research objective is required")
         required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
+        mission = EconomicMission(objective, source="autonomy", constraints={"execution_id": execution_id})
+        mission_id = mission.mission_id
         if self.adaptive_loop is not None:
-            self.adaptive_loop.register_mission(execution_id, objective, required_capabilities)
+            self.adaptive_loop.register_mission(execution_id, objective, required_capabilities, mission_id=mission_id)
         if required_capabilities:
             unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
             if unknown:
-                return self._capability_learning_result(claimed, required_capabilities)
+                return self._capability_learning_result(claimed, required_capabilities, mission_id)
 
-        mission = EconomicMission(objective, source="autonomy", constraints={"execution_id": execution_id})
         mission.plan(list(DEFAULT_ECONOMIC_TASKS))
         mission.start()
-        self._emit("mission.started", "orchestrator", execution_id, {"mission_id": mission.mission_id, "objective": objective})
+        self._emit("mission.started", "orchestrator", execution_id, {"mission_id": mission_id, "objective": objective})
         stop = threading.Event()
         heartbeat = threading.Thread(target=self._heartbeat_loop, args=(execution_id, claimed.worker_id, claimed.lease_token, stop), name=f"aurelix-lease-{execution_id}", daemon=True)
         heartbeat.start()
-        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id, "mission_id": mission.mission_id})
+        self.store.record_audit(execution_id, "autonomy.started", {"objective": objective, "actor": claimed.worker_id, "mission_id": mission_id})
         try:
             research = self.research.run(objective, self.engines)
             self._emit("research.completed", "research", execution_id, {"status": research.get("status"), "evidence_count": len(research.get("evidence", []))})
@@ -167,19 +168,19 @@ class AutonomyFabric:
             business = self.business.run(opportunity, approved=False)
             self._emit("business.completed", "business", execution_id, {"status": business.get("status"), "approved": False})
             lifecycle_status = business.get("status") or "completed"
-            result = _jsonable({"execution_id": execution_id, "status": lifecycle_status, "research": research, "academy": academy, "knowledge": knowledge, "innovation": innovation, "experiment": experiment, "evaluation": evaluation, "opportunity": opportunity, "business": business, "mission_id": mission.mission_id})
+            result = _jsonable({"execution_id": execution_id, "status": lifecycle_status, "research": research, "academy": academy, "knowledge": knowledge, "innovation": innovation, "experiment": experiment, "evaluation": evaluation, "opportunity": opportunity, "business": business, "mission_id": mission_id})
             if lifecycle_status in {"awaiting_measurement", "awaiting_execution", "awaiting_validation", "awaiting_approval", "awaiting_provider"}:
                 mission.block(lifecycle_status)
             else:
                 mission.complete([{"type": "pipeline_result", "status": lifecycle_status, "verified": lifecycle_status == "completed"}])
             self.store.complete(execution_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
-            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id, "mission_id": mission.mission_id})
-            self._emit("mission.completed", "orchestrator", execution_id, {"mission_id": mission.mission_id, "status": lifecycle_status})
+            self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id, "mission_id": mission_id})
+            self._emit("mission.completed", "orchestrator", execution_id, {"mission_id": mission_id, "status": lifecycle_status})
             return AutonomyRun(**result)
         except Exception as exc:
             mission.block(type(exc).__name__)
-            self._emit("mission.blocked", "orchestrator", execution_id, {"mission_id": mission.mission_id, "reason": type(exc).__name__})
-            self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__, "mission_id": mission.mission_id})
+            self._emit("mission.blocked", "orchestrator", execution_id, {"mission_id": mission_id, "reason": type(exc).__name__})
+            self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__, "mission_id": mission_id})
             raise
         finally:
             stop.set()
