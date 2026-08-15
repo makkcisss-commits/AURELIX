@@ -4,10 +4,20 @@ from aurelix_core.identity import Identity, register_secret
 from aurelix_core.system_snapshot import SystemSnapshot
 
 
-def test_authenticated_snapshot_endpoint_returns_dashboard_state() -> None:
+def test_authenticated_snapshot_endpoint_returns_explicit_dashboard_state() -> None:
     identity = Identity("owner", "owner")
     credential = register_secret(identity.id, "secret")
-    api = PrivateReadOnlyApi(DashboardService(SystemSnapshot()))
+    verified = SystemSnapshot(
+        system="HEALTHY",
+        governor="OPERATIONAL",
+        policy="ACTIVE",
+        audit="RECORDING",
+        api="PROTECTED",
+        execution="GUARDED",
+        budget="ACTIVE",
+        breaker="READY",
+    )
+    api = PrivateReadOnlyApi(DashboardService(verified))
 
     response = api.get_snapshot(ReadOnlyRequest(identity, credential, "secret"))
 
@@ -25,6 +35,20 @@ def test_snapshot_endpoint_rejects_invalid_credentials() -> None:
 
     assert response.status == 401
     assert response.body == {"error": "authentication_failed"}
+
+
+def test_default_snapshot_does_not_claim_operational_state() -> None:
+    api = PrivateReadOnlyApi(DashboardService(SystemSnapshot()))
+    response = api.get_snapshot(
+        ReadOnlyRequest(
+            Identity("owner", "owner"),
+            register_secret("owner", "secret"),
+            "secret",
+        )
+    )
+    assert response.status == 200
+    assert response.body["system"] == "UNVERIFIED"
+    assert response.body["governor"] == "UNVERIFIED"
 
 
 def test_routes_contain_no_mutating_endpoint() -> None:
