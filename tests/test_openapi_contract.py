@@ -44,10 +44,14 @@ def test_private_routes_require_the_declared_secret_scheme() -> None:
     assert contract["paths"]["/health"]["get"]["security"] == []
     assert contract["paths"]["/ready"]["get"]["security"] == []
 
+    root_security = contract["security"]
     for path, definition in contract["paths"].items():
         if path.startswith("/v1/"):
-            for operation in definition.values():
-                assert operation["security"] == [{"AurelixSecret": []}]
+            for method, operation in definition.items():
+                if method not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                declared_security = operation.get("security", root_security)
+                assert declared_security == [{"AurelixSecret": []}]
 
 
 def test_contract_does_not_expose_fastapi_runtime_openapi() -> None:
