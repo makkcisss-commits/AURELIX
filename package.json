@@ -1,0 +1,11 @@
+{
+  "name": "aurelix-dev-launcher",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Development launcher for the Python-based AURELIX service.",
+  "scripts": {
+    "dev": "PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app --reload",
+    "start": "PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app",
+    "test": "python -m pytest"
+  }
+}
