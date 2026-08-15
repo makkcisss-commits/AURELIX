@@ -52,6 +52,12 @@ class AurelixSystem:
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
+        if self.cycle_handler is None and self.config.enable_autonomy:
+            # A standalone system still has a real cycle boundary: the cycle
+            # queues the canonical autonomy handler instead of failing later at
+            # scheduling time. EngineFactory installations replace this bridge
+            # with their governed system-cycle implementation above.
+            self.cycle_handler = lambda objective: self.runtime.submit("autonomy.run", {"objective": objective})
         if self.cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
 
@@ -62,9 +68,9 @@ class AurelixSystem:
         self._schedule_lock = threading.RLock()
 
         if self.config.enable_autonomy:
-            if self.factory is not None and self.cycle_handler is not None:
+            if self.cycle_handler is not None:
                 self.schedule_system_cycle("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
-            elif self.cycle_handler is None:
+            else:
                 self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
     @property
