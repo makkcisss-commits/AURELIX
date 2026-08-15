@@ -41,6 +41,7 @@ class Scheduler:
                                else PersistentJobQueue())
         self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
+        self._next_run_at: dict[str, float] = {}
         self._stop = threading.Event()
         self._schedule_db = getattr(self.queue.store, "db", None)
         self._schedule_lock = getattr(self.queue.store, "lock", threading.RLock())
@@ -57,41 +58,53 @@ class Scheduler:
                     interval_seconds REAL NOT NULL,
                     job_kind TEXT NOT NULL,
                     payload TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    next_run_at REAL
                 )
             """)
+            columns = {row[1] for row in self._schedule_db.execute("PRAGMA table_info(schedules)").fetchall()}
+            if "next_run_at" not in columns:
+                self._schedule_db.execute("ALTER TABLE schedules ADD COLUMN next_run_at REAL")
 
     def _load_schedules(self) -> None:
         if self._schedule_db is None:
             return
         with self._schedule_lock:
             rows = self._schedule_db.execute(
-                "SELECT name, interval_seconds, job_kind, payload FROM schedules ORDER BY name"
+                "SELECT name, interval_seconds, job_kind, payload, next_run_at FROM schedules ORDER BY name"
             ).fetchall()
-        self.schedules = [
-            Schedule(row["name"], float(row["interval_seconds"]), row["job_kind"], json.loads(row["payload"]))
-            for row in rows
-        ]
+        now = time.time()
+        self.schedules = []
+        self._next_run_at = {}
+        for row in rows:
+            schedule = Schedule(row[0], float(row[1]), row[2], json.loads(row[3]))
+            self.schedules.append(schedule)
+            self._next_run_at[schedule.name] = float(row[4]) if row[4] is not None else now
 
-    def _persist_schedule(self, schedule: Schedule) -> None:
+    def _persist_schedule(self, schedule: Schedule, next_run_at: float | None = None) -> None:
         if self._schedule_db is None:
             return
+        if next_run_at is None:
+            next_run_at = self._next_run_at.get(schedule.name, time.time())
+        self._next_run_at[schedule.name] = next_run_at
         with self._schedule_lock, self._schedule_db:
             self._schedule_db.execute(
-                """INSERT INTO schedules(name, interval_seconds, job_kind, payload, updated_at)
-                   VALUES(?,?,?,?,?)
+                """INSERT INTO schedules(name, interval_seconds, job_kind, payload, updated_at, next_run_at)
+                   VALUES(?,?,?,?,?,?)
                    ON CONFLICT(name) DO UPDATE SET
                      interval_seconds=excluded.interval_seconds,
                      job_kind=excluded.job_kind,
                      payload=excluded.payload,
-                     updated_at=excluded.updated_at""",
+                     updated_at=excluded.updated_at,
+                     next_run_at=excluded.next_run_at""",
                 (schedule.name, schedule.interval_seconds, schedule.job_kind,
-                 json.dumps(schedule.payload, sort_keys=True), str(time.time_ns())),
+                 json.dumps(schedule.payload, sort_keys=True), str(time.time_ns()), next_run_at),
             )
 
     def remove(self, name: str) -> bool:
         before = len(self.schedules)
         self.schedules = [schedule for schedule in self.schedules if schedule.name != name]
+        self._next_run_at.pop(name, None)
         removed = len(self.schedules) != before
         if self._schedule_db is not None:
             with self._schedule_lock, self._schedule_db:
@@ -123,7 +136,7 @@ class Scheduler:
                 self._persist_schedule(schedule)
                 return
         self.schedules.append(schedule)
-        self._persist_schedule(schedule)
+        self._persist_schedule(schedule, time.time())
 
     def tick(self) -> list[str]:
         processed: list[str] = []
@@ -151,13 +164,17 @@ class Scheduler:
         return self.queue.recover_running()
 
     def serve_forever(self) -> None:
-        next_run = {s.name: time.monotonic() for s in self.schedules}
+        # Wall-clock due times are persisted so a restart cannot silently reset
+        # every schedule to "now". Missed intervals are coalesced into one run,
+        # avoiding a restart storm while still guaranteeing a missed schedule is
+        # not forgotten.
         while not self._stop.is_set():
-            now = time.monotonic()
-            for schedule in self.schedules:
-                if now >= next_run[schedule.name]:
+            now = time.time()
+            for schedule in list(self.schedules):
+                next_run = self._next_run_at.get(schedule.name, now)
+                if now >= next_run:
                     self.submit(schedule.job_kind, schedule.payload)
-                    next_run[schedule.name] = now + schedule.interval_seconds
+                    self._persist_schedule(schedule, now + schedule.interval_seconds)
             self.tick()
             self._stop.wait(0.5)
 
