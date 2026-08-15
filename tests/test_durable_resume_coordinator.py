@@ -3,10 +3,11 @@ from aurelix_runtime.persistence import RuntimeStore
 from aurelix_runtime.resume_coordinator import DurableResumeCoordinator
 
 
-def test_resume_requeues_same_execution_id_without_creating_duplicate_job(tmp_path):
+def test_resume_creates_distinct_execution_attempt_and_preserves_parent(tmp_path):
     store = RuntimeStore(tmp_path / "runtime.db")
     try:
         execution_id = "exec-resume-1"
+        mission_id = "mission-1"
         queued = store.enqueue(
             "autonomy.run",
             {"objective": "continue mission", "required_capabilities": []},
@@ -14,31 +15,39 @@ def test_resume_requeues_same_execution_id_without_creating_duplicate_job(tmp_pa
         )
         claimed = store.claim(queued.job_id, worker_id="worker-1")
         assert claimed is not None
+        original_result = {"status": "capability_learning_required"}
         store.complete(
             execution_id,
-            {"status": "capability_learning_required"},
+            original_result,
             worker_id=claimed.worker_id,
             lease_token=claimed.lease_token,
         )
 
         mission = AdaptiveMission(
             execution_id=execution_id,
+            mission_id=mission_id,
             objective="continue mission",
             required_capabilities=("new-capability",),
             blocked=False,
         )
-        resumed = DurableResumeCoordinator(store).resume(mission)
+        coordinator = DurableResumeCoordinator(store)
+        resumed = coordinator.resume(mission)
+        resumed_again = coordinator.resume(mission)
 
-        assert resumed == execution_id
-        record = store.get(execution_id)
-        assert record is not None
-        assert record.status == "queued"
-        assert record.attempts == 0
-        assert store.get_result(execution_id) is None
+        assert resumed != execution_id
+        assert resumed_again == resumed
+        parent = store.get(execution_id)
+        child = store.get(resumed)
+        assert parent is not None and parent.status == "completed"
+        assert child is not None and child.status == "queued"
+        assert child.payload["mission_id"] == mission_id
+        assert child.payload["parent_execution_id"] == execution_id
+        assert store.get_result(execution_id) == original_result
+        assert store.get_result(resumed) is None
 
         with store.lock:
             count = store.db.execute(
-                "SELECT COUNT(*) FROM jobs WHERE job_id=?", (execution_id,)
+                "SELECT COUNT(*) FROM jobs WHERE job_id LIKE ?", (f"{mission_id}:resume:%",)
             ).fetchone()[0]
         assert count == 1
     finally:
