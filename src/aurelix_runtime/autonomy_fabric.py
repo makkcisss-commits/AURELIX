@@ -266,7 +266,7 @@ class AutonomyFabric:
             raise
 
     def resume_mission(self, blocked_execution_id: str) -> AutonomyRun:
-        """Resume the original mission after its required capabilities are validated."""
+        """Resume a mission only after atomically acquiring its coordination lease."""
         if self.adaptive_loop is None:
             raise RuntimeError("adaptive loop is unavailable")
         context = self._load_mission_context(blocked_execution_id)
@@ -274,12 +274,14 @@ class AutonomyFabric:
             raise KeyError(blocked_execution_id)
         if not self.adaptive_loop.can_resume(blocked_execution_id):
             raise RuntimeError("required capabilities are not validated")
-        self.adaptive_loop.resume_ready(blocked_execution_id)
+        # Ownership must be acquired before any state mutation. A concurrent
+        # loser must observe a failure without changing AdaptiveLoop state.
         resume_execution_id = self._claim_resume_execution(blocked_execution_id)
         existing = self.store.get(resume_execution_id)
         if existing is not None and existing.status == "completed":
             result = self.store.get_result(resume_execution_id)
             return AutonomyRun(**result)
+        self.adaptive_loop.resume_ready(blocked_execution_id)
         self._mark_resume_running(blocked_execution_id, resume_execution_id)
         try:
             result = self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
