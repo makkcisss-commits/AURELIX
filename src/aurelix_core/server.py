@@ -261,3 +261,12 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
         }
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"economic_outcome_rejected: {type(exc).__name__}") from exc
+
+
+# The repository already contains the complete private control-center web
+# surface. Expose that existing UI at / without changing any API route or
+# authentication boundary; StaticFiles is mounted last so the API routes above
+# retain precedence.
+_WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+if _WEB_ROOT.is_dir():
+    app.mount("/", StaticFiles(directory=str(_WEB_ROOT), html=True), name="web")
