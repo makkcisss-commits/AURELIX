@@ -35,3 +35,18 @@ def test_scheduler_rejects_unapproved_job_kind():
         return
     scheduler.queue.close()
     assert False, "unapproved job kind must be rejected"
+
+
+def test_scheduler_definitions_survive_restart_and_update_in_place(tmp_path):
+    db_path = tmp_path / "scheduler.db"
+    first = Scheduler(queue=__import__("aurelix_runtime.job_queue", fromlist=["PersistentJobQueue"]).PersistentJobQueue(store=__import__("aurelix_runtime.persistence", fromlist=["RuntimeStore"]).RuntimeStore(db_path)))
+    first.add(Schedule("daily", 60, "system.cycle", {"objective": "one"}))
+    first.add(Schedule("daily", 120, "system.cycle", {"objective": "two"}))
+    first.queue.close()
+
+    second = Scheduler(queue=__import__("aurelix_runtime.job_queue", fromlist=["PersistentJobQueue"]).PersistentJobQueue(store=__import__("aurelix_runtime.persistence", fromlist=["RuntimeStore"]).RuntimeStore(db_path)))
+    assert second.schedules == [Schedule("daily", 120, "system.cycle", {"objective": "two"})]
+    assert second.remove("daily") is True
+    second.reload()
+    assert second.schedules == []
+    second.queue.close()
