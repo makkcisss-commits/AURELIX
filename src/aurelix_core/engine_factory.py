@@ -36,6 +36,7 @@ from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
 from aurelix_runtime.system_developer import SystemDeveloper
+from aurelix_runtime.system_integrity import SystemIntegrityController
 from aurelix_runtime.system_validation import SystemValidation
 
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
@@ -100,6 +101,7 @@ class EngineFactory:
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
         self.system_validation = SystemValidation(self)
+        self.integrity = SystemIntegrityController(self)
         self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer)
         self.system_orchestrator = SystemOrchestrator(self)
 
@@ -132,6 +134,7 @@ class EngineFactory:
     def system_status(self): return self.system_orchestrator.status()
     def diagnose(self): return self.diagnostics.run()
     def validate_system(self): return self.system_validation.run()
+    def check_integrity(self): return self.integrity.run()
     def learn_verified(self, objective: str, evidence): return self.knowledge_learning.learn(objective, evidence)
     def plan_system_change(self, objective: str, scope: list[str] | None = None): return self.system_developer.plan(objective, scope)
     def self_improvement_assess(self): return self.self_improvement.assess()
