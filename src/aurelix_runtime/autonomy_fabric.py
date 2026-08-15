@@ -122,7 +122,15 @@ class AutonomyFabric:
                     existing = json.loads(row[0])
                     state = existing.get("state")
                     if state == "reserved":
-                        existing_lease_until = float(existing.get("lease_until", 0.0) or 0.0)
+                        existing_lease_until = existing.get("lease_until")
+                        if existing_lease_until is None:
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume reservation has no lease metadata")
+                        try:
+                            existing_lease_until = float(existing_lease_until)
+                        except (TypeError, ValueError):
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume reservation has invalid lease metadata")
                         if existing_lease_until > now:
                             self.store.db.commit()
                             raise RuntimeError("mission resume already in progress")
