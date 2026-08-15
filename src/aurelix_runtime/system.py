@@ -11,6 +11,7 @@ from aurelix_core.governor import Governor, GovernorRoute
 from .message_fabric import AgentMessage, MessageFabric
 from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
 from .runtime import AurelixRuntime, RuntimeConfig
+from .schedule_registry import ScheduleRegistry
 from .scheduler import Schedule, Scheduler, SchedulerConfig
 
 
@@ -56,10 +57,18 @@ class AurelixSystem:
             self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
 
         self.scheduler = Scheduler(submit=self.submit, config=self.config.scheduler)
+        self.schedule_registry = ScheduleRegistry(self.store)
         self._stop = threading.Event()
         self._started = False
         self._next_run: dict[str, float] = {}
         self._schedule_lock = threading.RLock()
+
+        # Schedule definitions are durable configuration, not transient
+        # process state. Existing schedules are restored before defaults are
+        # registered; re-registering a name remains an idempotent update.
+        for persisted in self.schedule_registry.load():
+            self.scheduler.add(persisted)
+            self._next_run.setdefault(persisted.name, time.monotonic())
 
         if self.config.enable_autonomy:
             if self.factory is not None and self.cycle_handler is not None:
@@ -105,6 +114,7 @@ class AurelixSystem:
         schedule = Schedule(name, interval_seconds, job_kind, {"objective": objective})
         with self._schedule_lock:
             self.scheduler.add(schedule)
+            self.schedule_registry.save(schedule)
             self._next_run.setdefault(name, time.monotonic())
 
     def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
@@ -193,6 +203,7 @@ class AurelixSystem:
             "worker_id": self.runtime.worker_id,
             "store": "shared",
             "scheduler": "shared-runtime",
+            "schedule_persistence": "durable-runtime-state",
             "governor": "canonical-submission-boundary",
             "fabric": "shared-composition-fabric" if self.factory is not None else "structured-topic-router",
             "composition": "engine-factory" if self.factory is not None else "standalone",
