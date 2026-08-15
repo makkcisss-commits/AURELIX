@@ -28,6 +28,7 @@ class SystemValidation:
             "runtime": self._runtime,
             "engine_factory": self._factory,
             "canonical_composition": self._composition,
+            "system_integrity": self._integrity,
             "shared_intelligence": self._shared_intelligence,
             "experiment_execution": self._experiment_execution,
             "economic_feedback": self._economic_feedback,
@@ -70,6 +71,13 @@ class SystemValidation:
             "experiment_runner": fabric.experiment_runner is self.factory.experiment_runner,
         }
         return {"status": "ok" if all(shared.values()) else "failed", "shared": shared}
+
+    def _integrity(self) -> dict[str, Any]:
+        controller = getattr(self.factory, "integrity", None)
+        if controller is None:
+            return {"status": "failed", "reason": "integrity_controller_missing"}
+        report = controller.run()
+        return {"status": report["status"], "summary": report["summary"], "findings": report["findings"]}
 
     def _shared_intelligence(self) -> dict[str, Any]:
         orchestrator = getattr(self.factory, "system_orchestrator", None)
