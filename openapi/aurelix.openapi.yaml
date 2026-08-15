@@ -1,0 +1,190 @@
+openapi: 3.1.0
+info:
+  title: AURELIX Private API
+  version: 0.2.0
+  description: Contract statique de l'API de contrôle privée d'AURELIX. Le fichier est destiné à l'analyse de contrat et de sécurité; la documentation HTTP publique reste désactivée dans FastAPI.
+servers:
+  - url: http://127.0.0.1:8000
+    description: Local development
+security:
+  - AurelixSecret: []
+tags:
+  - name: health
+  - name: control
+  - name: actions
+paths:
+  /health:
+    get:
+      tags: [health]
+      security: []
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+  /ready:
+    get:
+      tags: [health]
+      security: []
+      responses:
+        '200':
+          description: Service ready
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: Service not ready
+  /v1/control/snapshot:
+    get:
+      tags: [control]
+      responses:
+        '200':
+          description: Current system snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/control/experiments:
+    get:
+      tags: [control]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Experiments
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/control/knowledge:
+    get:
+      tags: [control]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          default: 20
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Knowledge search results
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/control/audit:
+    get:
+      tags: [control]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          default: 50
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Recent audit events
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/actions/research:
+    post:
+      tags: [actions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchRequest'
+      responses:
+        '200':
+          description: Research flow result
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          description: Research flow failure
+  /v1/actions/experiments/{experiment_id}/execute:
+    post:
+      tags: [actions]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExperimentExecutionRequest'
+      responses:
+        '200':
+          description: Experiment execution result
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Experiment not found
+        '422':
+          description: Experiment execution failed
+components:
+  securitySchemes:
+    AurelixSecret:
+      type: apiKey
+      in: header
+      name: X-AURELIX-SECRET
+      description: Private owner credential. Never commit the actual secret.
+  schemas:
+    ResearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ExperimentExecutionRequest:
+      type: object
+      properties:
+        observations:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+  responses:
+    Unauthorized:
+      description: Authentication required
