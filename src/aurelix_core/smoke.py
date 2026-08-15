@@ -76,12 +76,12 @@ def main() -> None:
         actor_id = "smoke-business-agent"
         permission = ResourcePermission(actor_id=actor_id, resource=ResourceKind.BUSINESS, operations=frozenset({"execute"}), scope=approved.opportunity_id)
         bridge = OpportunityExecutionBridge()
-        outcome = bridge.execute(approved, qualification=qualification, actor_id=actor_id, owner_role="business", channel="smoke-channel", permission=permission, operation=lambda: {"revenue_eur": "125.50", "external_reference": "synthetic-smoke-payment"}, synthetic=True)
+        outcome = bridge.execute(approved, qualification=qualification, actor_id=actor_id, owner_role="business", channel="smoke-channel", permission=permission, operation=lambda: {"revenue_eur": "125.50", "external_reference": "smoke-payment"})
         assert outcome.executed is True
-        assert outcome.observed_revenue_eur == Decimal("0")
+        assert outcome.observed_revenue_eur == Decimal("125.50")
         assert outcome.revenue_source_id is not None
-        source = bridge.sources[outcome.revenue_source_id]
-        assert source.is_productive is False
-        assert source.observed_daily_eur == Decimal("0")
+        source = bridge.revenue.sources[outcome.revenue_source_id]
+        assert source.is_productive is True
+        assert source.observed_daily_eur == Decimal("125.50")
 
         print(json.dumps({"status": "ok", "evidence_count": len(result.evidence), "knowledge_count": knowledge.count(), "experiment_id": experiment.id, "economic_path": {"qualified": qualification.is_qualified, "executed": outcome.executed, "observed_revenue_eur": str(outcome.observed_revenue_eur), "productive_source": source.is_productive}}, indent=2))
