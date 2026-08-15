@@ -34,6 +34,7 @@ class AurelixSystem:
         if self.config.economic_cycle_seconds < 1:
             raise ValueError("economic_cycle_seconds must be >= 1")
         self.factory = factory
+        self._standalone_cycle_fallback = False
         if factory is not None:
             self.runtime = factory.runtime
             self._owns_runtime = False
@@ -53,6 +54,15 @@ class AurelixSystem:
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
+
+        # A standalone system has no EnterpriseLoop to execute a full economic
+        # cycle. Keep the existing standalone autonomy behavior, while still
+        # making an explicitly requested system-cycle schedule executable: it
+        # delegates the objective to the already-registered durable autonomy job.
+        if self.cycle_handler is None and self.config.enable_autonomy:
+            self._standalone_cycle_fallback = True
+            self.cycle_handler = lambda objective: self.runtime.submit("autonomy.run", {"objective": objective})
+
         if self.cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
 
@@ -73,6 +83,8 @@ class AurelixSystem:
         if self.config.enable_autonomy:
             if self.factory is not None and self.cycle_handler is not None:
                 self.schedule_system_cycle("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
+            elif self._standalone_cycle_fallback:
+                self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
             elif self.cycle_handler is None:
                 self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
