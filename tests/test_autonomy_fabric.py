@@ -18,8 +18,6 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
         return [Evidence(source="trusted", claim="validated fact", confidence=0.9, verified=True)]
 
     def measure(_experiment):
-        # This test supplies the experiment's explicit measurement boundary.
-        # The production runtime never invents this observation when no executor exists.
         return [{"success": 0.0}]
 
     store = RuntimeStore(db)
@@ -132,6 +130,19 @@ def test_active_reserved_resume_is_still_single_owner(tmp_path: Path) -> None:
         fabric._claim_resume_execution(blocked)
 
     assert _get_resume_state(store, blocked)["execution_id"] == "active-resume"
+    fabric.close()
+
+
+def test_legacy_reserved_resume_without_lease_is_not_reclaimed(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "resume.db", lease_seconds=5)
+    fabric = AutonomyFabric(store=store)
+    blocked = "blocked-legacy"
+    _put_resume_state(store, blocked, {"state": "reserved", "execution_id": "legacy-resume"})
+
+    with pytest.raises(RuntimeError, match="no lease metadata"):
+        fabric._claim_resume_execution(blocked)
+
+    assert _get_resume_state(store, blocked)["execution_id"] == "legacy-resume"
     fabric.close()
 
 
