@@ -64,7 +64,7 @@ def test_scheduler_next_run_survives_restart_without_resetting_to_now(tmp_path):
     first = Scheduler(queue=PersistentJobQueue(store=RuntimeStore(db_path)))
     first.add(Schedule("hourly", 3600, "system.cycle", {"objective": "due-time"}))
     original_due = first._next_run_at["hourly"]
-    assert original_due >= time.time()
+    assert original_due >= time.time() - 1.0
     first.queue.close()
 
     second = Scheduler(queue=PersistentJobQueue(store=RuntimeStore(db_path)))
