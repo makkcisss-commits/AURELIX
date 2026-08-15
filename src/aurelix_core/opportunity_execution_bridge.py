@@ -100,10 +100,14 @@ class OpportunityExecutionBridge:
         if isinstance(result.output, dict) and "revenue_eur" in result.output:
             reported = Decimal(str(result.output["revenue_eur"]))
             if reported > 0:
+                # Keep compatibility with existing bounded operations that used
+                # the shorter "reference" key while making the canonical field
+                # explicit for productive-revenue evidence.
+                external_reference = result.output.get("external_reference") or result.output.get("reference")
                 source = self.revenue.record_observation(
                     source.source_id,
                     reported,
-                    external_reference=result.output.get("external_reference"),
+                    external_reference=external_reference,
                     synthetic=synthetic,
                 )
                 if source.is_productive:
