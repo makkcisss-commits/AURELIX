@@ -59,7 +59,10 @@ class DurableResumeCoordinator:
 
                 new_execution_id = f"{mission_id}:resume:{uuid4()}"
                 payload = json.loads(row["payload"])
-                payload["mission_id"] = mission_id
+                payload.update({
+                    "mission_id": mission_id,
+                    "parent_execution_id": blocked_execution_id,
+                })
                 now = self.store._now()
                 self.store.db.execute(
                     """INSERT INTO jobs(
