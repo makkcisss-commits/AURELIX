@@ -15,6 +15,13 @@ class AdaptiveMission:
     required_capabilities: tuple[str, ...] = ()
     blocked: bool = False
     capability_gap_ids: tuple[str, ...] = ()
+    mission_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.execution_id.strip() or not self.objective.strip():
+            raise ValueError("execution_id and objective are required")
+        if not self.mission_id:
+            object.__setattr__(self, "mission_id", self.execution_id)
 
 
 @dataclass
@@ -36,10 +43,11 @@ class AdaptiveLoop:
     resume_executor: Callable[[AdaptiveMission], Any] | None = field(default=None, repr=False)
 
     def register_mission(self, execution_id: str, objective: str,
-                         required_capabilities: list[str] | tuple[str, ...] = ()) -> AdaptiveMission:
+                         required_capabilities: list[str] | tuple[str, ...] = (),
+                         mission_id: str | None = None) -> AdaptiveMission:
         if not execution_id.strip() or not objective.strip():
             raise ValueError("execution_id and objective are required")
-        mission = AdaptiveMission(execution_id, objective, tuple(required_capabilities))
+        mission = AdaptiveMission(execution_id, objective, tuple(required_capabilities), mission_id=mission_id or execution_id)
         self.missions[execution_id] = mission
         return mission
 
@@ -55,6 +63,7 @@ class AdaptiveLoop:
         updated = AdaptiveMission(
             mission.execution_id, mission.objective, mission.required_capabilities,
             blocked=True, capability_gap_ids=(*mission.capability_gap_ids, gap.gap_id),
+            mission_id=mission.mission_id,
         )
         self.missions[execution_id] = updated
         return updated, objective
@@ -122,6 +131,7 @@ class AdaptiveLoop:
         updated = AdaptiveMission(
             mission.execution_id, mission.objective, mission.required_capabilities,
             blocked=False, capability_gap_ids=mission.capability_gap_ids,
+            mission_id=mission.mission_id,
         )
         self.missions[execution_id] = updated
         if self.resume_executor is not None:
