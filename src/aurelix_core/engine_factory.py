@@ -21,6 +21,7 @@ from .opportunity_revenue_bridge import OpportunityRevenueBridge
 from .policy import PolicyEngine
 from .revenue import RevenueEngine
 from .revenue_portfolio import RevenuePortfolio
+from .durable_revenue_portfolio import DurableRevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
@@ -78,7 +79,7 @@ class EngineFactory:
         self.business = BusinessEngine(require_approval=True)
         self.revenue = RevenueEngine()
         self.opportunity_revenue_bridge = OpportunityRevenueBridge(self.revenue)
-        self.revenue_portfolio = RevenuePortfolio()
+        self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store)
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
