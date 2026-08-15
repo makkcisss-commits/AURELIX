@@ -270,3 +270,15 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
 _WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 if _WEB_ROOT.is_dir():
     app.mount("/", StaticFiles(directory=str(_WEB_ROOT), html=True), name="web")
+
+
+def main() -> None:
+    """Launch the packaged AURELIX ASGI server."""
+    import uvicorn
+
+    uvicorn.run(
+        "aurelix_core.server:app",
+        host=os.getenv("AURELIX_HOST", "0.0.0.0"),
+        port=int(os.getenv("AURELIX_PORT", "8000")),
+        log_level=os.getenv("AURELIX_LOG_LEVEL", "info"),
+    )
