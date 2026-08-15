@@ -112,14 +112,15 @@ def main() -> None:
             owner_role="business",
             channel="smoke-channel",
             permission=permission,
-            operation=lambda: {"revenue_eur": "125.50", "reference": "smoke-payment"},
+            operation=lambda: {"revenue_eur": "125.50", "external_reference": "synthetic-smoke-payment"},
+            synthetic=True,
         )
         assert outcome.executed is True
-        assert outcome.observed_revenue_eur == Decimal("125.50")
+        assert outcome.observed_revenue_eur == Decimal("0")
         assert outcome.revenue_source_id is not None
         source = bridge.revenue.sources[outcome.revenue_source_id]
-        assert source.is_productive is True
-        assert source.observed_daily_eur == Decimal("125.50")
+        assert source.is_productive is False
+        assert source.observed_daily_eur == Decimal("0")
 
         print(json.dumps({
             "status": "ok",
