@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "Development launcher for the Python-based AURELIX service.",
   "scripts": {
-    "dev": "PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app --reload",
+    "dev": "sh -c 'AURELIX_OWNER_SECRET=\"${AURELIX_OWNER_SECRET:-$(python -c '\''import secrets; print(secrets.token_urlsafe(32))'\'')}\" PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app --reload'",
     "start": "PYTHONPATH=src AURELIX_HOST=0.0.0.0 AURELIX_PORT=8000 python -m uvicorn aurelix_core.server:app",
     "test": "python -m pytest"
   }
