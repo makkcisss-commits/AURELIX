@@ -18,6 +18,8 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
         return [Evidence(source="trusted", claim="validated fact", confidence=0.9, verified=True)]
 
     def measure(_experiment):
+        # This test supplies the experiment's explicit measurement boundary.
+        # The production runtime never invents this observation when no executor exists.
         return [{"success": 0.0}]
 
     store = RuntimeStore(db)
