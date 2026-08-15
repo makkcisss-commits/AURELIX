@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from dataclasses import dataclass
@@ -41,6 +42,66 @@ class Scheduler:
         self._uses_default_submit = submit is None
         self.schedules: list[Schedule] = []
         self._stop = threading.Event()
+        self._schedule_db = getattr(self.queue.store, "db", None)
+        self._schedule_lock = getattr(self.queue.store, "lock", threading.RLock())
+        self._ensure_schedule_store()
+        self._load_schedules()
+
+    def _ensure_schedule_store(self) -> None:
+        if self._schedule_db is None:
+            return
+        with self._schedule_lock, self._schedule_db:
+            self._schedule_db.execute("""
+                CREATE TABLE IF NOT EXISTS schedules (
+                    name TEXT PRIMARY KEY,
+                    interval_seconds REAL NOT NULL,
+                    job_kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+    def _load_schedules(self) -> None:
+        if self._schedule_db is None:
+            return
+        with self._schedule_lock:
+            rows = self._schedule_db.execute(
+                "SELECT name, interval_seconds, job_kind, payload FROM schedules ORDER BY name"
+            ).fetchall()
+        self.schedules = [
+            Schedule(row["name"], float(row["interval_seconds"]), row["job_kind"], json.loads(row["payload"]))
+            for row in rows
+        ]
+
+    def _persist_schedule(self, schedule: Schedule) -> None:
+        if self._schedule_db is None:
+            return
+        with self._schedule_lock, self._schedule_db:
+            self._schedule_db.execute(
+                """INSERT INTO schedules(name, interval_seconds, job_kind, payload, updated_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(name) DO UPDATE SET
+                     interval_seconds=excluded.interval_seconds,
+                     job_kind=excluded.job_kind,
+                     payload=excluded.payload,
+                     updated_at=excluded.updated_at""",
+                (schedule.name, schedule.interval_seconds, schedule.job_kind,
+                 json.dumps(schedule.payload, sort_keys=True), str(time.time_ns())),
+            )
+
+    def remove(self, name: str) -> bool:
+        before = len(self.schedules)
+        self.schedules = [schedule for schedule in self.schedules if schedule.name != name]
+        removed = len(self.schedules) != before
+        if self._schedule_db is not None:
+            with self._schedule_lock, self._schedule_db:
+                cursor = self._schedule_db.execute("DELETE FROM schedules WHERE name=?", (name,))
+                removed = removed or cursor.rowcount == 1
+        return removed
+
+    def reload(self) -> None:
+        """Reload durable schedule definitions after process restart or admin changes."""
+        self._load_schedules()
 
     def _submit(self, job_kind: str, payload: dict[str, str]) -> str:
         if job_kind not in self.APPROVED_JOB_KINDS:
@@ -59,8 +120,10 @@ class Scheduler:
         for index, existing in enumerate(self.schedules):
             if existing.name == schedule.name:
                 self.schedules[index] = schedule
+                self._persist_schedule(schedule)
                 return
         self.schedules.append(schedule)
+        self._persist_schedule(schedule)
 
     def tick(self) -> list[str]:
         processed: list[str] = []
