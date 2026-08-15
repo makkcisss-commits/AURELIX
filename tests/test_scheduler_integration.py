@@ -58,12 +58,13 @@ def test_scheduler_definitions_survive_restart_and_update_in_place(tmp_path):
 def test_scheduler_next_run_survives_restart_without_resetting_to_now(tmp_path):
     from aurelix_runtime.job_queue import PersistentJobQueue
     from aurelix_runtime.persistence import RuntimeStore
+    import time
 
     db_path = tmp_path / "scheduler-due.db"
     first = Scheduler(queue=PersistentJobQueue(store=RuntimeStore(db_path)))
     first.add(Schedule("hourly", 3600, "system.cycle", {"objective": "due-time"}))
     original_due = first._next_run_at["hourly"]
-    assert original_due - first._now() >= 3590
+    assert original_due - time.time() >= 3590
     first.queue.close()
 
     second = Scheduler(queue=PersistentJobQueue(store=RuntimeStore(db_path)))
