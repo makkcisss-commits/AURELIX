@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, is_dataclass, asdict
 import json
 import threading
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -111,6 +112,8 @@ class AutonomyFabric:
     def _claim_resume_execution(self, blocked_execution_id: str) -> str:
         key = f"mission-resume:{blocked_execution_id}"
         resume_execution_id = f"{blocked_execution_id}:resume:{uuid4()}"
+        now = time.time()
+        lease_until = now + max(1.0, float(self.store.lease_seconds))
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
@@ -118,13 +121,21 @@ class AutonomyFabric:
                 if row is not None:
                     existing = json.loads(row[0])
                     state = existing.get("state")
-                    if state in {"reserved", "running"}:
-                        self.store.db.commit()
-                        raise RuntimeError("mission resume already in progress")
-                    if state == "completed" and existing.get("execution_id"):
+                    if state == "reserved":
+                        existing_lease_until = float(existing.get("lease_until", 0.0) or 0.0)
+                        if existing_lease_until > now:
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume already in progress")
+                    elif state == "running":
+                        existing_execution_id = existing.get("execution_id")
+                        existing_job = self.store.get(existing_execution_id) if existing_execution_id else None
+                        if existing_job is not None and existing_job.status == "running" and existing_job.lease_until > now:
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume already in progress")
+                    elif state == "completed" and existing.get("execution_id"):
                         self.store.db.commit()
                         return str(existing["execution_id"])
-                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id}, sort_keys=True)))
+                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id, "lease_until": lease_until}, sort_keys=True)))
                 self.store.db.commit()
                 return resume_execution_id
             except Exception:
