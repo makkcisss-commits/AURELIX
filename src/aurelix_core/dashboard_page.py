@@ -10,6 +10,6 @@ def render_dashboard() -> HTMLResponse:
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AURELIX</title></head>
-<body><main><h1>AURELIX</h1><p>Private control surface</p><p>owner-secret</p></main></body>
+<body><main><h1>AURELIX</h1><p>Private control surface</p></main></body>
 </html>"""
     )
