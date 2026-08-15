@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
 from .http_server import PrivateReadOnlyApi, ReadOnlyRequest
-from .identity import Identity, register_secret
+from .identity import AuthenticationError, Identity, authenticate, register_secret
 from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
@@ -112,8 +112,13 @@ _api = PrivateReadOnlyApi(
 
 
 def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOnlyRequest:
+    """Authenticate the request before any protected endpoint can execute."""
     if _credential is None or x_aurelix_secret is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+    try:
+        authenticate(_identity, _credential, x_aurelix_secret)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_failed") from exc
     return ReadOnlyRequest(_identity, _credential, x_aurelix_secret)
 
 
