@@ -159,3 +159,29 @@ def test_running_resume_is_reclaimable_when_runtime_execution_is_missing(tmp_pat
     assert resumed != "crashed-resume"
     assert _get_resume_state(store, blocked)["execution_id"] == resumed
     fabric.close()
+
+
+def test_resume_claim_happens_before_adaptive_mutation(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "resume-order.db", lease_seconds=5)
+    fabric = AutonomyFabric(store=store)
+    blocked = "blocked-order"
+    with store.lock, store.db:
+        store.db.execute(
+            "INSERT INTO runtime_state(key,value) VALUES(?,?)",
+            (f"mission:{blocked}", json.dumps({"mission_id": "mission-1", "objective": "resume me", "required_capabilities": ["research"], "state": "blocked"})),
+        )
+    _put_resume_state(store, blocked, {"state": "reserved", "execution_id": "other-worker", "lease_until": time.time() + 60})
+
+    class Guard:
+        def can_resume(self, execution_id):
+            assert execution_id == blocked
+            return True
+
+        def resume_ready(self, execution_id):
+            raise AssertionError("adaptive state must not mutate when resume ownership is unavailable")
+
+    fabric.adaptive_loop = Guard()
+    with pytest.raises(RuntimeError, match="already in progress"):
+        fabric.resume_mission(blocked)
+    assert _get_resume_state(store, blocked)["execution_id"] == "other-worker"
+    fabric.close()
