@@ -129,7 +129,7 @@ class AutonomyFabric:
                     elif state == "running":
                         existing_execution_id = existing.get("execution_id")
                         existing_job = self.store.get(existing_execution_id) if existing_execution_id else None
-                        if existing_job is not None and existing_job.status == "running" and existing_job.lease_until > now:
+                        if existing_job is not None and existing_job.status == "running" and existing_job.lease_until and existing_job.lease_until > self.store._now():
                             self.store.db.commit()
                             raise RuntimeError("mission resume already in progress")
                     elif state == "completed" and existing.get("execution_id"):
