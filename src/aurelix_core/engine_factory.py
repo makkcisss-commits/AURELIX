@@ -32,6 +32,7 @@ from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
 from aurelix_runtime.message_fabric import MessageFabric
+from aurelix_runtime.resume_coordinator import DurableResumeCoordinator
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
@@ -85,6 +86,8 @@ class EngineFactory:
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
+        self.resume_coordinator = DurableResumeCoordinator(self.runtime.store)
+        self.adaptive_loop.set_resume_executor(self.resume_coordinator.resume)
         if self.config.register_autonomy:
             self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop)
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
