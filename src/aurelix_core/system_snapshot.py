@@ -6,14 +6,20 @@ from typing import Any
 
 @dataclass(frozen=True)
 class SystemSnapshot:
-    system: str = "HEALTHY"
-    governor: str = "OPERATIONAL"
-    policy: str = "ACTIVE"
-    audit: str = "RECORDING"
-    api: str = "PROTECTED"
-    execution: str = "GUARDED"
-    budget: str = "ACTIVE"
-    breaker: str = "READY"
+    """Conservative dashboard state.
+
+    A status is never reported as operational merely because the object exists.
+    Callers that have verified a component may explicitly provide a stronger state.
+    """
+
+    system: str = "UNVERIFIED"
+    governor: str = "UNVERIFIED"
+    policy: str = "UNVERIFIED"
+    audit: str = "UNVERIFIED"
+    api: str = "UNVERIFIED"
+    execution: str = "UNVERIFIED"
+    budget: str = "UNVERIFIED"
+    breaker: str = "UNVERIFIED"
 
     def public(self) -> dict[str, Any]:
         """Return only intentionally public dashboard state."""
