@@ -1,3 +1,5 @@
+import json
+
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.continuous_intelligence import EvidenceKind
 from aurelix_runtime.job_queue import PersistentJobQueue
@@ -46,14 +48,13 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
     resumed = factory.adaptive_loop.resume_ready(execution_id)
     assert resumed.blocked is False
     assert resumed.mission_id == mission_id
-    resumed_execution = next(
-        row["execution_id"]
-        for row in [factory.runtime.store.db.execute(
+
+    with factory.runtime.store.lock:
+        row = factory.runtime.store.db.execute(
             "SELECT value FROM runtime_state WHERE key=?", (f"mission-resume:{mission_id}",)
-        ).fetchone()]
-        if row is not None
-        for row in [{"execution_id": __import__("json").loads(row[0])["execution_id"]}]
-    )
+        ).fetchone()
+    assert row is not None
+    resumed_execution = json.loads(row[0])["execution_id"]
     assert resumed_execution != execution_id
     assert factory.runtime.store.get(execution_id).status == "queued"
     assert factory.runtime.store.get(resumed_execution).status == "queued"
