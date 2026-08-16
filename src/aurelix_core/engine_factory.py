@@ -65,7 +65,7 @@ class EngineFactory:
         self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
         self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
         self.research = ResearchEngine(self.research_provider)
-        self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
+        self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge, self.governor) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
         self.academy_agent = AcademyAgent(self.academy)
         self.curated_academy = CuratedAcademy()
