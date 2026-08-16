@@ -61,7 +61,7 @@ class EconomicOutcomeRequest(BaseModel):
     observed_daily_eur: Decimal = Field(ge=0)
     governor_decision_id: str = Field(min_length=1, max_length=200)
     resource_scope: str | None = Field(default=None, max_length=500)
-    external_reference: str | None = Field(default=None, max_length=500)
+    external_reference: str = Field(min_length=1, max_length=500)
 
 
 def _live_snapshot() -> dict:
@@ -70,9 +70,11 @@ def _live_snapshot() -> dict:
     runtime_status = _runtime.store.status()
     experiments = _runtime.query_experiments()
     recent_knowledge = _factory.knowledge.search(KnowledgeQuery("", limit=10))
+    financial_execution = "CONNECTED" if os.getenv("AURELIX_FINANCIAL_PROVIDER") else "FINANCIAL_EXECUTION_NOT_CONNECTED"
     return {
         **SystemSnapshot().public(),
         "runtime": runtime_status,
+        "financial_execution": financial_execution,
         "providers": {"model_configured": _factory.model_provider is not None, "research_configured": _factory.research_provider is not None, "knowledge_backend": type(_factory.knowledge).__name__},
         "experiments": {"total": len(experiments), "active": len([x for x in experiments if x["status"] in {"proposed", "running", "measuring", "evaluation"}]), "completed": len([x for x in experiments if x["status"] == "complete"])},
         "knowledge": {"total_items": _factory.knowledge.count(), "recent": [{"id": item.id, "title": item.title, "tags": item.tags, "created_at": item.created_at} for item in recent_knowledge]},
@@ -161,7 +163,7 @@ def ready():
     response = _api.get_readiness(service_ready)
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["status"])
-    return response.body
+    return {**response.body, "financial_execution": "CONNECTED" if os.getenv("AURELIX_FINANCIAL_PROVIDER") else "FINANCIAL_EXECUTION_NOT_CONNECTED"}
 
 
 @app.get("/v1/control/snapshot")
@@ -270,6 +272,7 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
             "expected_daily_eur": str(entry.expected_daily_eur),
             "observed_daily_eur": str(entry.observed_daily_eur),
             "variance_daily_eur": str(entry.variance_daily_eur),
+            "external_reference": entry.external_reference,
             "verified": entry.verified,
         }
     except Exception as exc:
