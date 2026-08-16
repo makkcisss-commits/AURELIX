@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .dashboard_page import render_dashboard
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
 from .http_server import PrivateReadOnlyApi, ReadOnlyRequest
@@ -127,9 +128,6 @@ async def lifespan(app: FastAPI):
                 "AURELIX_AUTONOMY_OBJECTIVE",
                 "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
             )
-            # EngineFactory already installs the canonical economic-discovery
-            # schedule. Re-registering that same identity updates it rather than
-            # creating a second autonomous economic loop.
             _system.schedule_system_cycle("economic-discovery", interval, objective)
             thread = _system_thread
             if thread is None or not thread.is_alive():
@@ -154,6 +152,11 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
+
+
+@app.get("/", include_in_schema=False)
+def dashboard():
+    return render_dashboard()
 
 
 @app.get("/health", include_in_schema=False)
@@ -261,3 +264,18 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
         }
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"economic_outcome_rejected: {type(exc).__name__}") from exc
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "aurelix_core.server:app",
+        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
+        port=int(os.getenv("AURELIX_PORT", "8000")),
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()
