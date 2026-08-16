@@ -98,7 +98,17 @@ class AutonomyFabric:
             if not self.store.heartbeat(execution_id, worker_id, lease_token):
                 return
 
-    def _capability_learning_result(self, claimed: JobRecord, required_capabilities: list[str]) -> AutonomyRun:
+    def _save_mission_context(self, execution_id: str, mission: EconomicMission, objective: str, required_capabilities: list[str]) -> None:
+        payload = {"execution_id": execution_id, "mission_id": mission.mission_id, "objective": objective, "required_capabilities": required_capabilities, "state": mission.state.value}
+        with self.store.lock, self.store.db:
+            self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (f"mission:{execution_id}", json.dumps(payload, sort_keys=True)))
+
+    def _load_mission_context(self, execution_id: str) -> dict[str, Any] | None:
+        with self.store.lock:
+            row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (f"mission:{execution_id}",)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def _capability_learning_result(self, claimed: JobRecord, mission: EconomicMission, required_capabilities: list[str]) -> AutonomyRun:
         unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
         if not unknown:
             raise ValueError("capability learning requested without an unknown capability")
@@ -118,11 +128,13 @@ class AutonomyFabric:
                 self.store.record_audit(claimed.job_id, "autonomy.capability_escalated", gaps[-1])
             status = "capability_learning_required"
             academy = {"status": "learning_required", "capability_gaps": gaps}
-        result = {"execution_id": claimed.job_id, "status": status, "research": {"status": "not_started"}, "academy": academy, "knowledge": {"status": "blocked"}, "innovation": {"status": "blocked"}, "experiment": {"status": "blocked"}, "evaluation": {"status": "blocked"}, "opportunity": {"status": "blocked"}, "business": {"status": "blocked", "reason": "required capability is not validated"}, "mission_id": ""}
+        mission.block("required capability is not validated")
+        self._save_mission_context(claimed.job_id, mission, str(claimed.payload.get("objective", "")), required_capabilities)
+        result = {"execution_id": claimed.job_id, "status": status, "research": {"status": "not_started"}, "academy": academy, "knowledge": {"status": "blocked"}, "innovation": {"status": "blocked"}, "experiment": {"status": "blocked"}, "evaluation": {"status": "blocked"}, "opportunity": {"status": "blocked"}, "business": {"status": "blocked", "reason": "required capability is not validated"}, "mission_id": mission.mission_id}
         self.store.complete(claimed.job_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
         return AutonomyRun(**result)
 
-    def run_claimed(self, claimed: JobRecord, required_capabilities: list[str] | None = None) -> AutonomyRun:
+    def run_claimed(self, claimed: JobRecord, required_capabilities: list[str] | None = None, mission_id: str | None = None) -> AutonomyRun:
         if claimed.status != "running" or not claimed.worker_id or not claimed.lease_token:
             raise RuntimeError(f"execution is not actively owned: {claimed.job_id}")
         execution_id = claimed.job_id
@@ -130,16 +142,18 @@ class AutonomyFabric:
         if not objective:
             raise ValueError("research objective is required")
         required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
-        if self.adaptive_loop is not None:
-            self.adaptive_loop.register_mission(execution_id, objective, required_capabilities)
-        if required_capabilities:
-            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES]
-            if unknown:
-                return self._capability_learning_result(claimed, required_capabilities)
-
-        mission = EconomicMission(objective, source="autonomy", constraints={"execution_id": execution_id})
+        mission_id = mission_id or str(claimed.payload.get("mission_id", "")) or str(uuid4())
+        mission = EconomicMission(objective, source="autonomy", mission_id=mission_id, constraints={"execution_id": execution_id})
         mission.plan(list(DEFAULT_ECONOMIC_TASKS))
         mission.start()
+        self._save_mission_context(execution_id, mission, objective, required_capabilities)
+        if self.adaptive_loop is not None:
+            self.adaptive_loop.register_mission(execution_id, objective, required_capabilities, mission_id=mission_id)
+        if required_capabilities:
+            unknown = [cap.strip() for cap in required_capabilities if cap.strip() and cap.strip().casefold() not in self._SUPPORTED_CAPABILITIES and not (self.adaptive_loop and self.adaptive_loop.capability_validated(cap))]
+            if unknown:
+                return self._capability_learning_result(claimed, mission, unknown)
+
         self._emit("mission.started", "orchestrator", execution_id, {"mission_id": mission.mission_id, "objective": objective})
         stop = threading.Event()
         heartbeat = threading.Thread(target=self._heartbeat_loop, args=(execution_id, claimed.worker_id, claimed.lease_token, stop), name=f"aurelix-lease-{execution_id}", daemon=True)
@@ -158,6 +172,8 @@ class AutonomyFabric:
             if experiment.get("experiment_id"):
                 experiment_record = self.engines.experiments[experiment["experiment_id"]]
                 experiment_run = self.experiment_runner.execute(experiment_record)
+                self.engines.experiments[experiment_record.id] = experiment_record
+                self.engines.persist()
                 experiment = {"experiment_id": experiment_record.id, "status": experiment_run.status, "criteria": experiment_record.success_criteria, "result": experiment_record.result}
             self._emit("experiment.completed", "experiment", execution_id, {"status": experiment.get("status"), "experiment_id": experiment.get("experiment_id")})
             evaluation = self.evaluation.run(experiment, self.engines)
@@ -172,12 +188,14 @@ class AutonomyFabric:
                 mission.block(lifecycle_status)
             else:
                 mission.complete([{"type": "pipeline_result", "status": lifecycle_status, "verified": lifecycle_status == "completed"}])
+            self._save_mission_context(execution_id, mission, objective, required_capabilities)
             self.store.complete(execution_id, result, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             self.store.record_audit(execution_id, "autonomy.completed", {"status": result["status"], "worker_id": claimed.worker_id, "mission_id": mission.mission_id})
             self._emit("mission.completed", "orchestrator", execution_id, {"mission_id": mission.mission_id, "status": lifecycle_status})
             return AutonomyRun(**result)
         except Exception as exc:
             mission.block(type(exc).__name__)
+            self._save_mission_context(execution_id, mission, objective, required_capabilities)
             self._emit("mission.blocked", "orchestrator", execution_id, {"mission_id": mission.mission_id, "reason": type(exc).__name__})
             self.store.record_audit(execution_id, "autonomy.failed", {"error": type(exc).__name__, "mission_id": mission.mission_id})
             raise
@@ -185,20 +203,80 @@ class AutonomyFabric:
             stop.set()
             heartbeat.join(timeout=max(1.0, self.store.lease_seconds / 2.0))
 
-    def run(self, objective: str, execution_id: str | None = None, required_capabilities: list[str] | None = None) -> AutonomyRun:
+    def run(self, objective: str, execution_id: str | None = None, required_capabilities: list[str] | None = None, mission_id: str | None = None) -> AutonomyRun:
         execution_id = execution_id or str(uuid4())
-        job = self.store.enqueue("autonomy.run", {"objective": objective, "required_capabilities": required_capabilities or []}, execution_id=execution_id)
+        job = self.store.enqueue("autonomy.run", {"objective": objective, "required_capabilities": required_capabilities or [], **({"mission_id": mission_id} if mission_id else {})}, execution_id=execution_id)
         worker_id = f"autonomy:{execution_id}"
         claimed = self.store.claim(job.job_id, worker_id=worker_id)
         if claimed is None:
             raise RuntimeError(f"autonomy execution is not claimable: {execution_id}")
         try:
-            return self.run_claimed(claimed, required_capabilities=required_capabilities)
+            return self.run_claimed(claimed, required_capabilities=required_capabilities, mission_id=mission_id)
         except Exception as exc:
             current = self.store.get(execution_id)
             if current and current.status == "running":
                 self.store.finish(execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             raise
+
+    def resume_mission(self, blocked_execution_id: str) -> AutonomyRun:
+        """Resume a blocked mission only after validated capabilities, preserving mission identity."""
+        if self.adaptive_loop is None:
+            raise RuntimeError("adaptive loop is unavailable")
+        context = self._load_mission_context(blocked_execution_id)
+        if context is None:
+            raise KeyError(blocked_execution_id)
+        if not self.adaptive_loop.can_resume(blocked_execution_id):
+            raise RuntimeError("required capabilities are not validated")
+        mission = self.adaptive_loop.resume_ready(blocked_execution_id)
+        resume_execution_id = self._claim_resume_execution(blocked_execution_id, mission.mission_id)
+        existing = self.store.get(resume_execution_id)
+        if existing is not None and existing.status == "completed":
+            result = self.store.get_result(resume_execution_id)
+            return AutonomyRun(**result)
+        self._mark_resume_running(blocked_execution_id, resume_execution_id)
+        return self.run(
+            context["objective"],
+            execution_id=resume_execution_id,
+            required_capabilities=context["required_capabilities"],
+            mission_id=mission.mission_id,
+        )
+
+    def _claim_resume_execution(self, blocked_execution_id: str, mission_id: str) -> str:
+        key = f"mission-resume:{mission_id}"
+        resume_execution_id = f"{mission_id}:resume:{uuid4()}"
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (key,)).fetchone()
+                if row is not None:
+                    existing = json.loads(row[0])
+                    if existing.get("execution_id"):
+                        existing_id = str(existing["execution_id"])
+                        if self.store.get(existing_id) is not None:
+                            self.store.db.commit()
+                            return existing_id
+                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id, "blocked_execution_id": blocked_execution_id, "mission_id": mission_id}, sort_keys=True)))
+                self.store.db.commit()
+                return resume_execution_id
+            except Exception:
+                self.store.db.rollback()
+                raise
+
+    def _mark_resume_running(self, blocked_execution_id: str, execution_id: str) -> None:
+        with self.store.lock, self.store.db:
+            row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (f"mission-resume:{blocked_execution_id}",)).fetchone()
+            if row is None:
+                return
+            state = json.loads(row[0]); state.update({"state": "running", "execution_id": execution_id})
+            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps(state, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
+
+    def _mark_resume_completed(self, blocked_execution_id: str, execution_id: str) -> None:
+        with self.store.lock, self.store.db:
+            row = self.store.db.execute("SELECT value FROM runtime_state WHERE key=?", (f"mission-resume:{blocked_execution_id}",)).fetchone()
+            if row is None:
+                return
+            state = json.loads(row[0]); state.update({"state": "completed", "execution_id": execution_id})
+            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps(state, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
 
     def close(self) -> None:
         self.store.close()
