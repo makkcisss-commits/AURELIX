@@ -14,7 +14,7 @@ Une responsabilité = une source canonique. Les fichiers spécialisés peuvent e
 | Messages | `src/aurelix_runtime/message_fabric.py` | communication structurée |
 | Opportunités | `src/aurelix_core/opportunities.py` | modèle d'opportunité |
 | Qualification économique | `src/aurelix_core/economic_opportunity_validation.py` | preuve avant revenu |
-| Revenu | `src/aurelix_core/revenue.py` + `revenue_portfolio.py` | observation et portefeuille |
+| Revenu | `src/aurelix_core/revenue.py` + `src/aurelix_core/durable_revenue_portfolio.py` | observation vérifiée et portefeuille persistant |
 | Apprentissage économique | `src/aurelix_core/economic_feedback.py` | retour économique vérifié |
 | Contrôle d'accès | `src/aurelix_core/identity.py` + politiques | identité et permissions |
 | API | `src/aurelix_core/private_api.py` / `server.py` | surface contrôlée |
