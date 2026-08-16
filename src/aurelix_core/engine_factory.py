@@ -62,7 +62,7 @@ class EngineFactory:
         self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.continuous_intelligence = ContinuousIntelligence()
         self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
-        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
+        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator, store=self.runtime.store)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
@@ -98,7 +98,7 @@ class EngineFactory:
         self.system_orchestrator = SystemOrchestrator(self)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
-        if provider is None: return None
+        if provider is None: raise RuntimeError("model provider is unavailable")
         def policy(request: GenerationRequest) -> bool:
             decision = self.policy_engine.evaluate(DecisionRequest(actor=Actor(request.actor_id, "engine", AutonomyLevel.A1), action=ActionClass.RESEARCH, reason=request.action, payload={"prompt": request.prompt}))
             return decision.allowed
