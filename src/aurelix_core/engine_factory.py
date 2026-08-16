@@ -17,8 +17,11 @@ from .governor import Governor
 from .audit import AuditLog
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
+from .opportunity_revenue_bridge import OpportunityRevenueBridge
 from .policy import PolicyEngine
-from .revenue_portfolio import RevenuePortfolio
+from .revenue import RevenueEngine
+from .durable_revenue import DurableRevenueLedger
+from .durable_revenue_portfolio import DurableRevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
@@ -29,6 +32,7 @@ from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
 from aurelix_runtime.research_provider import HttpResearchProvider, TavilyResearchProvider
 from aurelix_runtime.message_fabric import MessageFabric
+from aurelix_runtime.resume_coordinator import DurableResumeCoordinator
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
@@ -74,11 +78,16 @@ class EngineFactory:
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
         self.business = BusinessEngine(require_approval=True)
-        self.revenue_portfolio = RevenuePortfolio()
+        self.revenue = RevenueEngine()
+        self.durable_revenue = DurableRevenueLedger(self.runtime.store, self.revenue)
+        self.opportunity_revenue_bridge = OpportunityRevenueBridge(self.durable_revenue)
+        self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store)
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
+        self.resume_coordinator = DurableResumeCoordinator(self.runtime.store)
+        self.adaptive_loop.set_resume_executor(self.resume_coordinator.resume)
         if self.config.register_autonomy:
             self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop)
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)

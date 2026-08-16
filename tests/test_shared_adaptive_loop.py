@@ -1,5 +1,6 @@
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.continuous_intelligence import EvidenceKind
+from aurelix_runtime.job_queue import PersistentJobQueue
 
 
 def test_canonical_composition_shares_one_adaptive_loop() -> None:
@@ -13,6 +14,10 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
     factory.adaptive_loop.register_mission(
         execution_id, "validate a new business capability", ["crm-write"]
     )
+    # The resume handoff is deliberately durable: create the canonical Runtime
+    # execution before asking validated learning to resume it.
+    queue = PersistentJobQueue(store=factory.runtime.store, engine_store=factory.enterprise.store)
+    queue.enqueue(execution_id, "validate a new business capability")
     mission, objective = factory.adaptive_loop.block_for_capability(
         execution_id,
         "crm-write",
@@ -40,4 +45,6 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
     assert factory.adaptive_loop.can_resume(execution_id) is True
     resumed = factory.adaptive_loop.resume_ready(execution_id)
     assert resumed.blocked is False
+    assert factory.runtime.store.get(execution_id).status == "queued"
     factory.autonomy_fabric.close()
+    factory.runtime.close()

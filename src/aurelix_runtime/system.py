@@ -11,6 +11,7 @@ from aurelix_core.governor import Governor, GovernorRoute
 from .message_fabric import AgentMessage, MessageFabric
 from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
 from .runtime import AurelixRuntime, RuntimeConfig
+from .schedule_registry import ScheduleRegistry
 from .scheduler import Schedule, Scheduler, SchedulerConfig
 
 
@@ -33,6 +34,7 @@ class AurelixSystem:
         if self.config.economic_cycle_seconds < 1:
             raise ValueError("economic_cycle_seconds must be >= 1")
         self.factory = factory
+        self._standalone_cycle_fallback = False
         if factory is not None:
             self.runtime = factory.runtime
             self._owns_runtime = False
@@ -52,18 +54,37 @@ class AurelixSystem:
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
+
+        # A standalone system has no EnterpriseLoop to execute a full economic
+        # cycle. Keep the existing standalone autonomy behavior, while still
+        # making an explicitly requested system-cycle schedule executable: it
+        # delegates the objective to the already-registered durable autonomy job.
+        if self.cycle_handler is None and self.config.enable_autonomy:
+            self._standalone_cycle_fallback = True
+            self.cycle_handler = lambda objective: self.runtime.submit("autonomy.run", {"objective": objective})
+
         if self.cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
 
         self.scheduler = Scheduler(submit=self.submit, config=self.config.scheduler)
+        self.schedule_registry = ScheduleRegistry(self.store)
         self._stop = threading.Event()
         self._started = False
         self._next_run: dict[str, float] = {}
         self._schedule_lock = threading.RLock()
 
+        # Schedule definitions are durable configuration, not transient
+        # process state. Existing schedules are restored before defaults are
+        # registered; re-registering a name remains an idempotent update.
+        for persisted in self.schedule_registry.load():
+            self.scheduler.add(persisted)
+            self._next_run.setdefault(persisted.name, time.monotonic())
+
         if self.config.enable_autonomy:
             if self.factory is not None and self.cycle_handler is not None:
                 self.schedule_system_cycle("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
+            elif self._standalone_cycle_fallback:
+                self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
             elif self.cycle_handler is None:
                 self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
@@ -105,6 +126,7 @@ class AurelixSystem:
         schedule = Schedule(name, interval_seconds, job_kind, {"objective": objective})
         with self._schedule_lock:
             self.scheduler.add(schedule)
+            self.schedule_registry.save(schedule)
             self._next_run.setdefault(name, time.monotonic())
 
     def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
@@ -193,6 +215,7 @@ class AurelixSystem:
             "worker_id": self.runtime.worker_id,
             "store": "shared",
             "scheduler": "shared-runtime",
+            "schedule_persistence": "durable-runtime-state",
             "governor": "canonical-submission-boundary",
             "fabric": "shared-composition-fabric" if self.factory is not None else "structured-topic-router",
             "composition": "engine-factory" if self.factory is not None else "standalone",
