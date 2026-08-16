@@ -27,6 +27,7 @@ def test_resume_handoff_failure_does_not_unblock_mission() -> None:
     loop = AdaptiveLoop(intelligence, CapabilityEscalator(intelligence))
     mission = loop.register_mission("execution-1", "resume governed workflow", ["crm-write"], mission_id="mission-1")
     loop.block_for_capability(mission.execution_id, "crm-write", reason="capability missing", requested_by="test")
+    loop.can_resume = lambda _execution_id: True
     loop.set_resume_executor(lambda _mission: (_ for _ in ()).throw(RuntimeError("runtime unavailable")))
     try:
         loop.resume_ready(mission.execution_id)
