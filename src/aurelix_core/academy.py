@@ -53,17 +53,23 @@ class AcademyEngine:
     def _persist_item(self, item: Knowledge) -> None:
         if self.store is None:
             return
-        with self.store.lock, self.store.db:
-            row = self.store.db.execute(
-                "SELECT value FROM runtime_state WHERE key=?", (self._STATE_KEY,)
-            ).fetchone()
-            data = json.loads(row[0]) if row else {}
-            data[item.knowledge_id] = asdict(item)
-            self.store.db.execute(
-                "INSERT INTO runtime_state(key,value) VALUES(?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (self._STATE_KEY, json.dumps(data, sort_keys=True)),
-            )
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute(
+                    "SELECT value FROM runtime_state WHERE key=?", (self._STATE_KEY,)
+                ).fetchone()
+                data = json.loads(row[0]) if row else {}
+                data[item.knowledge_id] = asdict(item)
+                self.store.db.execute(
+                    "INSERT INTO runtime_state(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (self._STATE_KEY, json.dumps(data, sort_keys=True)),
+                )
+                self.store.db.commit()
+            except Exception:
+                self.store.db.rollback()
+                raise
 
     def run(self, research: dict, store) -> dict:
         """Execute the Academy stage without introducing a second Academy authority."""
