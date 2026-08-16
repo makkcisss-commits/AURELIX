@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
@@ -40,8 +38,12 @@ def test_resume_mission_propagates_execution_failure(tmp_path):
 
     state = coordinator.get("mission-failure")
     assert state is not None
-    assert state.active_execution_id != "parent-execution"
-    failed = store.get(state.active_execution_id)
+    assert state.status == "blocked"
+    assert state.active_execution_id is None
+    assert state.parent_execution_id == "parent-execution"
+    assert state.failed_execution_id is not None
+
+    failed = store.get(state.failed_execution_id)
     assert failed is not None
     assert failed.status == "failed"
     store.close()
