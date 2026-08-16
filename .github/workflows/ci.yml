@@ -70,7 +70,7 @@ jobs:
           python -m pip install -e .
       - name: Validate Python syntax
         run: python -m compileall -q src tests scripts
-      - name: Run PostgreSQL integration test
+      - name: Run PostgreSQL knowledge repository integration test
         run: pytest -q tests/test_postgres_knowledge_repository.py
 
   container-build:
@@ -137,7 +137,6 @@ jobs:
           AURELIX_DOMAIN: example.test
           AURELIX_OWNER_ID: ci-owner
           AURELIX_OWNER_SECRET: ci-owner-secret
-          POSTGRES_PASSWORD: ci-postgres-password
           AURELIX_MODEL_BASE_URL: https://api.openai.com/v1
           AURELIX_MODEL_API_KEY: ci-model-key
           AURELIX_RESEARCH_API_KEY: ci-research-key
