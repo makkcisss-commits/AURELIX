@@ -71,8 +71,17 @@ class AcademyEngine:
                 self.store.db.rollback()
                 raise
 
+    def _effective_store(self, store):
+        """Return the single configured persistence authority for this Academy."""
+        if self.store is not None and store is not self.store:
+            raise RuntimeError("Academy store mismatch: a second persistence authority is forbidden")
+        if self.store is None:
+            self.store = store
+        return self.store
+
     def run(self, research: dict, store) -> dict:
-        """Execute the Academy stage without introducing a second Academy authority."""
+        """Execute the Academy stage without introducing a second persistence authority."""
+        store = self._effective_store(store)
         evidence = list(research.get("evidence", []))
         if research.get("status") == "awaiting_provider":
             store.record("academy.blocked", reason="research_provider_unavailable")
@@ -132,12 +141,14 @@ class AcademyEngine:
         item = Knowledge(
             str(uuid4()), title, summary, tuple(learning_refs), tuple(source_refs), confidence
         )
-        self._knowledge[item.knowledge_id] = item
         self._persist_item(item)
+        self._knowledge[item.knowledge_id] = item
         return item
 
     def get(self, knowledge_id: str) -> Knowledge:
+        self._load()
         return self._knowledge[knowledge_id]
 
     def all(self) -> list[Knowledge]:
+        self._load()
         return list(self._knowledge.values())
