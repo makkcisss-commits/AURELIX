@@ -45,14 +45,11 @@ class EngineFactory:
         self.config = config or EngineFactoryConfig(); self.runtime = runtime or AurelixRuntime(self.config.runtime); self.policy_engine = PolicyEngine()
         self.governor = getattr(self.runtime.store, "_canonical_governor", None)
         if self.governor is None:
-            self.audit = AuditLog(sink=self.runtime.store.record_audit)
-            self.governor = Governor(policy=self.policy_engine, audit=self.audit)
-            setattr(self.runtime.store, "_canonical_governor", self.governor)
+            self.audit = AuditLog(sink=self.runtime.store.record_audit); self.governor = Governor(policy=self.policy_engine, audit=self.audit); setattr(self.runtime.store, "_canonical_governor", self.governor)
         else:
-            self.audit = self.governor.audit
+            self.policy_engine = self.governor.policy; self.audit = self.governor.audit
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
-        self.model_provider = model_provider if model_provider is not None else (DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env())
-        self.model_gateway = self._build_model_gateway(self.model_provider)
+        self.model_provider = model_provider if model_provider is not None else (DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env()); self.model_gateway = self._build_model_gateway(self.model_provider)
         self.research_provider = research_provider if research_provider is not None else (development_research_provider if development_mode else self._build_research_provider())
         self.knowledge = knowledge or SQLiteKnowledgeRepository(self.runtime.store); self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.continuous_intelligence = ContinuousIntelligence(); self.capability_escalator = CapabilityEscalator(self.continuous_intelligence); self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
@@ -68,7 +65,6 @@ class EngineFactory:
             self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner, after_execute=self.enterprise.continue_after_experiment); self.enterprise.set_experiment_submitter(self.runtime.submit_experiment)
         if self.autonomy_fabric is not None: self.autonomy_fabric.set_experiment_runner(self.experiment_runner)
         self.core_evaluation = CoreEvaluationEngine(); self.diagnostics = SystemDiagnostics(self); self.system_developer = SystemDeveloper(self.diagnostics, repository=repository); self.system_validation = SystemValidation(self); self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer); self.system_orchestrator = SystemOrchestrator(self)
-
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
         if provider is None: return None
         def policy(request: GenerationRequest) -> bool:
@@ -76,7 +72,6 @@ class EngineFactory:
         def audit(event: str, **metadata: Any) -> None:
             outcome = "failed" if event.endswith(".failed") else "denied" if event.endswith(".denied") else "requested" if event.endswith(".requested") else "succeeded" if event.endswith(".completed") else "recorded"; self.runtime.store.audit(event, str(metadata.get("actor_id", "system")), str(metadata.get("action", "model")), outcome, metadata)
         return GovernedModelGateway(provider, policy=policy, audit=audit)
-
     @staticmethod
     def _build_research_provider():
         provider = os.getenv("AURELIX_RESEARCH_PROVIDER", "http").strip().lower(); return TavilyResearchProvider.from_env() if provider == "tavily" else HttpResearchProvider.from_env()
