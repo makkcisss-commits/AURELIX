@@ -48,7 +48,6 @@ class RuntimeStore:
                     started_at TEXT, heartbeat_at TEXT, worker_id TEXT, lease_token TEXT, lease_until TEXT, last_error TEXT
                 );
                 CREATE TABLE IF NOT EXISTS job_results (job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), result TEXT NOT NULL, created_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS job_checkpoints (job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), checkpoint TEXT NOT NULL, updated_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS audit_events (event_id TEXT PRIMARY KEY, job_id TEXT, event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS experiments (experiment_id TEXT PRIMARY KEY, hypothesis TEXT NOT NULL, success_criteria TEXT NOT NULL, status TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -96,11 +95,6 @@ class RuntimeStore:
     def get_result(self, job_id: str) -> dict | None:
         with self.lock:
             row = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (job_id,)).fetchone()
-        return json.loads(row[0]) if row else None
-
-    def get_checkpoint(self, job_id: str) -> dict | None:
-        with self.lock:
-            row = self.db.execute("SELECT checkpoint FROM job_checkpoints WHERE job_id=?", (job_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def claim_next(self, max_attempts: int = 3, worker_id: str | None = None) -> JobRecord | None:
@@ -179,17 +173,13 @@ class RuntimeStore:
             if row["status"] != "running": raise RuntimeError(f"job {job_id} cannot finish from state {row['status']}")
             if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token: raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
             status = "queued" if retry else "failed"
-            self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (status, now, error, job_id, worker_id, lease_token))
+            cursor = self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (status, now, error, job_id, worker_id, lease_token))
+            if cursor.rowcount != 1:
+                raise LeaseLostError(f"job {job_id} lost ownership during finish")
             if not retry: self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
 
     def record_result(self, job_id: str, result: dict, worker_id: str | None = None, lease_token: str | None = None) -> None:
-        """Persist an intermediate checkpoint while the current lease is valid.
-
-        A checkpoint is deliberately separate from job_results. job_results is
-        the terminal-result ledger used by crash recovery to prove completion;
-        treating an intermediate result as terminal would allow a crash to be
-        incorrectly recovered as a completed execution.
-        """
+        """Persist an intermediate result only while the current lease is valid."""
         now_dt = datetime.now(timezone.utc); now = now_dt.isoformat()
         with self.lock, self.db:
             row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -197,10 +187,10 @@ class RuntimeStore:
             if row["status"] != "running":
                 existing = self.get_result(job_id)
                 if existing == result and row["status"] in TERMINAL_STATUSES: return
-                raise RuntimeError(f"job {job_id} cannot record a checkpoint from state {row['status']}")
+                raise RuntimeError(f"job {job_id} cannot record a result from state {row['status']}")
             if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
                 raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
-            self.db.execute("INSERT INTO job_checkpoints(job_id,checkpoint,updated_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET checkpoint=excluded.checkpoint, updated_at=excluded.updated_at", (job_id, json.dumps(result, sort_keys=True), now))
+            self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps(result, sort_keys=True), now))
 
     def fail(self, job_id: str, error: str, retry: bool = True, worker_id: str | None = None, lease_token: str | None = None) -> None:
         self.finish(job_id, False, error, retry=retry, worker_id=worker_id, lease_token=lease_token)
