@@ -236,21 +236,28 @@ class AutonomyFabric:
                     return existing
             raise RuntimeError("mission resume was concurrently claimed or is no longer blocked")
         self.store.record_audit(execution_id, "autonomy.resume_reserved", {"mission_id": mission_id, "parent_execution_id": parent_execution_id})
-        job = self.store.get(execution_id)
-        if job is None:
-            raise RuntimeError("resume reservation did not create an execution")
-        worker_id = f"autonomy:{execution_id}"
-        claimed = self.store.claim(execution_id, worker_id=worker_id)
-        if claimed is None:
-            return job
         try:
-            self.run_claimed(claimed, required_capabilities=list(state.required_capabilities))
-        except Exception as exc:
-            current = self.store.get(execution_id)
-            if current and current.status == "running":
-                self.store.finish(execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+            job = self.store.get(execution_id)
+            if job is None:
+                raise RuntimeError("resume reservation did not create an execution")
+            worker_id = f"autonomy:{execution_id}"
+            claimed = self.store.claim(execution_id, worker_id=worker_id)
+            if claimed is None:
+                self.resume_coordinator.release_resume(mission_id=mission_id, execution_id=execution_id, parent_execution_id=parent_execution_id)
+                raise RuntimeError("mission resume could not acquire a lease")
+            try:
+                self.run_claimed(claimed, required_capabilities=list(state.required_capabilities))
+            except Exception as exc:
+                current = self.store.get(execution_id)
+                if current and current.status == "running":
+                    self.store.finish(execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+                raise
+            return self.store.get(execution_id) or job
+        except Exception:
+            current_state = self.resume_coordinator.get(mission_id)
+            if current_state and current_state.status == "resume_reserved" and current_state.active_execution_id == execution_id:
+                self.resume_coordinator.release_resume(mission_id=mission_id, execution_id=execution_id, parent_execution_id=parent_execution_id)
             raise
-        return self.store.get(execution_id) or job
 
     def close(self) -> None:
         self.store.close()
