@@ -103,13 +103,13 @@ class MissionResumeCoordinator:
         return self._record(row)
 
     def reserve_resume(self, *, mission_id: str, execution_id: str) -> bool:
-        """Atomically converge concurrent resume requests onto one attempt."""
+        """Atomically converge concurrent resume requests onto one queued attempt."""
         now = self._now()
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
                 row = self.store.db.execute(
-                    "SELECT status, active_execution_id FROM mission_state WHERE mission_id=?",
+                    "SELECT status, active_execution_id, objective, required_capabilities FROM mission_state WHERE mission_id=?",
                     (mission_id,),
                 ).fetchone()
                 if row is None:
@@ -126,6 +126,15 @@ class MissionResumeCoordinator:
                     if existing and existing["status"] in {"queued", "running"}:
                         self.store.db.rollback()
                         return False
+                payload = {
+                    "objective": row["objective"],
+                    "mission_id": mission_id,
+                    "required_capabilities": json.loads(row["required_capabilities"]),
+                }
+                self.store.db.execute(
+                    "INSERT INTO jobs(job_id,name,payload,status,attempts,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (execution_id, "autonomy.run", json.dumps(payload, sort_keys=True), "queued", 0, now, now),
+                )
                 cursor = self.store.db.execute(
                     "UPDATE mission_state SET status='resume_reserved', active_execution_id=?, updated_at=? WHERE mission_id=? AND status='blocked'",
                     (execution_id, now, mission_id),
