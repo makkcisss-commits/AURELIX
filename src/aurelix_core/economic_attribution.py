@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+from threading import RLock
 from typing import Any
 
 
@@ -36,6 +37,7 @@ class EconomicAttributionLedger:
     def __init__(self, store=None) -> None:
         self.store = store
         self._entries: dict[str, EconomicAttribution] = {}
+        self._lock = RLock()
         self._load()
 
     def _load(self) -> None:
@@ -46,20 +48,21 @@ class EconomicAttributionLedger:
                 "SELECT value FROM runtime_state WHERE key=?", (self._STATE_KEY,)
             ).fetchone()
         data = json.loads(row[0]) if row else {}
-        self._entries = {
-            key: EconomicAttribution(
-                opportunity_id=value["opportunity_id"],
-                source_id=value["source_id"],
-                governor_decision_id=value.get("governor_decision_id"),
-                resource_scope=value.get("resource_scope"),
-                expected_daily_eur=Decimal(value["expected_daily_eur"]),
-                observed_daily_eur=Decimal(value["observed_daily_eur"]),
-                variance_daily_eur=Decimal(value["variance_daily_eur"]),
-                verified=bool(value["verified"]),
-                external_reference=value["external_reference"],
-            )
-            for key, value in data.items()
-        }
+        with self._lock:
+            self._entries = {
+                key: EconomicAttribution(
+                    opportunity_id=value["opportunity_id"],
+                    source_id=value["source_id"],
+                    governor_decision_id=value.get("governor_decision_id"),
+                    resource_scope=value.get("resource_scope"),
+                    expected_daily_eur=Decimal(value["expected_daily_eur"]),
+                    observed_daily_eur=Decimal(value["observed_daily_eur"]),
+                    variance_daily_eur=Decimal(value["variance_daily_eur"]),
+                    verified=bool(value["verified"]),
+                    external_reference=value["external_reference"],
+                )
+                for key, value in data.items()
+            }
 
     def _persist(self) -> None:
         if self.store is None:
@@ -117,33 +120,37 @@ class EconomicAttributionLedger:
             verified=True,
             external_reference=key,
         )
-        existing = self._entries.get(key)
-        if existing is not None:
-            if existing == entry:
-                return existing
-            raise ValueError("external_reference already maps to a different economic observation")
-        self._entries[key] = entry
-        self._persist()
-        return entry
+        with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None:
+                if existing == entry:
+                    return existing
+                raise ValueError("external_reference already maps to a different economic observation")
+            self._entries[key] = entry
+            self._persist()
+            return entry
 
     def all(self) -> list[EconomicAttribution]:
-        return list(self._entries.values())
+        with self._lock:
+            return list(self._entries.values())
 
     def by_opportunity(self, opportunity_id: str) -> list[EconomicAttribution]:
-        return [e for e in self._entries.values() if e.opportunity_id == opportunity_id]
+        with self._lock:
+            return [e for e in self._entries.values() if e.opportunity_id == opportunity_id]
 
     def learning_evidence(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "opportunity_id": e.opportunity_id,
-                "source_id": e.source_id,
-                "governor_decision_id": e.governor_decision_id,
-                "resource_scope": e.resource_scope,
-                "expected_daily_eur": e.expected_daily_eur,
-                "observed_daily_eur": e.observed_daily_eur,
-                "variance_daily_eur": e.variance_daily_eur,
-                "verified": e.verified,
-                "external_reference": e.external_reference,
-            }
-            for e in self._entries.values()
-        ]
+        with self._lock:
+            return [
+                {
+                    "opportunity_id": e.opportunity_id,
+                    "source_id": e.source_id,
+                    "governor_decision_id": e.governor_decision_id,
+                    "resource_scope": e.resource_scope,
+                    "expected_daily_eur": e.expected_daily_eur,
+                    "observed_daily_eur": e.observed_daily_eur,
+                    "variance_daily_eur": e.variance_daily_eur,
+                    "verified": e.verified,
+                    "external_reference": e.external_reference,
+                }
+                for e in self._entries.values()
+            ]
