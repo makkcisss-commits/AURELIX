@@ -1,5 +1,6 @@
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.continuous_intelligence import EvidenceKind
+import json
 
 
 def test_canonical_composition_shares_one_adaptive_loop() -> None:
@@ -59,6 +60,19 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
 
     resumed = factory.adaptive_loop.resume_ready(execution_id)
     assert resumed.blocked is False
-    child = factory.runtime.store.status()["queued"]
-    assert child >= 1
+    with factory.runtime.store.lock:
+        state_row = factory.runtime.store.db.execute(
+            "SELECT value FROM runtime_state WHERE key=?",
+            (f"mission-resume:{mission.mission_id}",),
+        ).fetchone()
+    assert state_row is not None
+    state = json.loads(state_row[0])
+    assert state["mission_id"] == mission.mission_id
+    assert state["blocked_execution_id"] == execution_id
+    assert state["state"] == "queued"
+    child = factory.runtime.store.get(state["execution_id"])
+    assert child is not None
+    assert child.status == "queued"
+    assert child.job_id != execution_id
+    assert child.payload["parent_execution_id"] == execution_id
     factory.autonomy_fabric.close()
