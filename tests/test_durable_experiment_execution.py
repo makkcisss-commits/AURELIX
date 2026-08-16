@@ -61,3 +61,37 @@ def test_submit_is_idempotent_for_same_experiment(tmp_path: Path) -> None:
         assert third == first
     finally:
         runtime.close()
+
+
+def test_awaiting_experiment_requeues_only_when_executor_is_available(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    calls = {"count": 0}
+    try:
+        experiment = Experiment("exp-requeue", "wait for a real executor", [{"metric": "score", "operator": ">=", "target": 0.5}])
+
+        def executor(_experiment: Experiment):
+            calls["count"] += 1
+            return [{"score": 0.9}]
+
+        runtime.register_experiment_runner(lambda _experiment: [])
+        first_job = runtime.submit_experiment(experiment)
+        assert runtime.run_once() is True
+        assert runtime.get_experiment(experiment.id).status == "awaiting_measurement"
+        assert runtime.requeue_awaiting_experiments(executor_available=False) == []
+        assert runtime.store.get(first_job).status == "completed"
+
+        runtime.register_experiment_runner(executor)
+        second_jobs = runtime.requeue_awaiting_experiments(executor_available=True)
+        assert len(second_jobs) == 1
+        second_job = second_jobs[0]
+        assert second_job != first_job
+        assert runtime.store.get(second_job).status == "queued"
+
+        duplicate = runtime.requeue_awaiting_experiments(executor_available=True)
+        assert duplicate == [second_job]
+        assert runtime.run_once() is True
+        assert runtime.store.get(second_job).status == "completed"
+        assert runtime.get_experiment(experiment.id).status == "complete"
+        assert calls["count"] == 1
+    finally:
+        runtime.close()

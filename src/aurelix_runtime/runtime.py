@@ -165,6 +165,19 @@ class AurelixRuntime:
         self.store.audit("experiment.queued", "runtime", record.job_id, "queued", {"experiment_id": experiment.id})
         return record.job_id
 
+    def requeue_awaiting_experiments(self, *, executor_available: bool, kind: str = "experiment.run") -> list[str]:
+        """Requeue waiting experiments when a real executor becomes available."""
+        if not executor_available:
+            return []
+        if kind not in self.handlers and kind not in self.claimed_handlers:
+            raise ValueError(f"unregistered job kind: {kind}")
+        job_ids: list[str] = []
+        for item in self.query_experiments(status="awaiting_measurement"):
+            job_ids.append(self.submit_experiment(self.get_experiment(item["experiment_id"]), kind=kind))
+        if job_ids:
+            self.store.audit("experiment.waiting.requeued", "runtime", self.worker_id, "queued", {"job_ids": job_ids, "count": len(job_ids)})
+        return job_ids
+
     def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
         if kind not in self.handlers and kind not in self.claimed_handlers: raise ValueError(f"unregistered job kind: {kind}")
         record = self.store.enqueue(kind, payload or {})

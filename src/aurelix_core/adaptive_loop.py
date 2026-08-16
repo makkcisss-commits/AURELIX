@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .capability_escalation import CapabilityEscalator
 from .continuous_intelligence import ContinuousIntelligence, Evidence, EvidenceKind, EvaluationStatus
@@ -23,12 +23,17 @@ class AdaptiveLoop:
 
     It owns coordination state only. Runtime/Governor remain the authorization
     boundary; learning never grants execution authority by itself.
+
+    ``resume_executor`` is deliberately an injected handoff. The loop can
+    declare that a mission is ready, but Runtime/Governor decide whether and
+    how the durable execution is actually resumed.
     """
 
     intelligence: ContinuousIntelligence
     capability_escalator: CapabilityEscalator
     missions: dict[str, AdaptiveMission] = field(default_factory=dict)
     _capability_missions: dict[str, set[str]] = field(default_factory=dict)
+    resume_executor: Callable[[AdaptiveMission], Any] | None = field(default=None, repr=False)
 
     def register_mission(self, execution_id: str, objective: str,
                          required_capabilities: list[str] | tuple[str, ...] = ()) -> AdaptiveMission:
@@ -104,6 +109,10 @@ class AdaptiveLoop:
         return all(self.capability_validated(capability)
                    for capability in mission.required_capabilities)
 
+    def set_resume_executor(self, executor: Callable[[AdaptiveMission], Any] | None) -> None:
+        """Attach the Runtime handoff without giving the loop execution authority."""
+        self.resume_executor = executor
+
     def resume_ready(self, execution_id: str) -> AdaptiveMission:
         mission = self.missions.get(execution_id)
         if mission is None:
@@ -115,4 +124,6 @@ class AdaptiveLoop:
             blocked=False, capability_gap_ids=mission.capability_gap_ids,
         )
         self.missions[execution_id] = updated
+        if self.resume_executor is not None:
+            self.resume_executor(updated)
         return updated

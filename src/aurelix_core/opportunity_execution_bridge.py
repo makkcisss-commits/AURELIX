@@ -55,6 +55,7 @@ class OpportunityExecutionBridge:
         operation: Callable[[], object],
         requires_capital: bool = False,
         production_change: bool = False,
+        synthetic: bool = False,
     ) -> OpportunityExecutionOutcome:
         if opportunity.stage is not OpportunityStage.APPROVED:
             raise ValueError("opportunity must be approved before execution")
@@ -97,9 +98,20 @@ class OpportunityExecutionBridge:
 
         observed = Decimal("0")
         if isinstance(result.output, dict) and "revenue_eur" in result.output:
-            observed = Decimal(str(result.output["revenue_eur"]))
-            if observed > 0:
-                source = self.revenue.record_observation(source.source_id, observed)
+            reported = Decimal(str(result.output["revenue_eur"]))
+            if reported > 0:
+                # Keep compatibility with existing bounded operations that used
+                # the shorter "reference" key while making the canonical field
+                # explicit for productive-revenue evidence.
+                external_reference = result.output.get("external_reference") or result.output.get("reference")
+                source = self.revenue.record_observation(
+                    source.source_id,
+                    reported,
+                    external_reference=external_reference,
+                    synthetic=synthetic,
+                )
+                if source.is_productive:
+                    observed = source.observed_daily_eur
 
         return OpportunityExecutionOutcome(
             opportunity.opportunity_id,
