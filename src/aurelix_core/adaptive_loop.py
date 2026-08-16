@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .capability_escalation import CapabilityEscalator
 from .continuous_intelligence import ContinuousIntelligence, Evidence, EvidenceKind, EvaluationStatus
@@ -28,14 +28,16 @@ class AdaptiveMission:
 class AdaptiveLoop:
     """One shared coordination boundary for AURELIX's adaptive lifecycle.
 
-    It owns coordination state only. Runtime/Governor remain the authorization
-    boundary; learning never grants execution authority by itself.
+    Runtime/Governor remain the authorization boundary. The optional
+    ``resume_executor`` is only a handoff into that canonical runtime; learning
+    itself never grants execution authority.
     """
 
     intelligence: ContinuousIntelligence
     capability_escalator: CapabilityEscalator
     missions: dict[str, AdaptiveMission] = field(default_factory=dict)
     _capability_missions: dict[str, set[str]] = field(default_factory=dict)
+    resume_executor: Callable[[AdaptiveMission], Any] | None = field(default=None, repr=False)
 
     def register_mission(self, execution_id: str, objective: str,
                          required_capabilities: list[str] | tuple[str, ...] = (),
@@ -116,6 +118,9 @@ class AdaptiveLoop:
         return all(self.capability_validated(capability)
                    for capability in mission.required_capabilities)
 
+    def set_resume_executor(self, executor: Callable[[AdaptiveMission], Any] | None) -> None:
+        self.resume_executor = executor
+
     def resume_ready(self, execution_id: str) -> AdaptiveMission:
         mission = self.missions.get(execution_id)
         if mission is None:
@@ -128,4 +133,6 @@ class AdaptiveLoop:
             mission_id=mission.mission_id,
         )
         self.missions[execution_id] = updated
+        if self.resume_executor is not None:
+            self.resume_executor(updated)
         return updated
