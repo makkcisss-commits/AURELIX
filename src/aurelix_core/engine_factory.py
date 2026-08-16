@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from .academy import AcademyEngine as CuratedAcademy
 from .academy_agent import AcademyAgent
+from .academy_curriculum import AcademyCurriculum
 from .adaptive_loop import AdaptiveLoop
 from .capability_escalation import CapabilityEscalator
 from .continuous_intelligence import ContinuousIntelligence
@@ -71,7 +72,12 @@ class EngineFactory:
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
         self.academy = AcademyEngine(self.model_gateway)
         self.academy_agent = AcademyAgent(self.academy)
+        # CuratedAcademy is retained as the existing projection contract used by
+        # SystemOrchestrator. AcademyCurriculum is not another Academy engine:
+        # it is the canonical curriculum/progress registry attached to the same
+        # durable runtime and shared with capability-gap discovery.
         self.curated_academy = CuratedAcademy()
+        self.academy_curriculum = AcademyCurriculum(self.runtime.store)
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
         self.experiment = ExperimentEngine()
