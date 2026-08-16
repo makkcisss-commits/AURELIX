@@ -20,7 +20,7 @@ class EconomicAttribution:
     observed_daily_eur: Decimal
     variance_daily_eur: Decimal
     verified: bool
-    external_reference: str | None = None
+    external_reference: str
 
     @property
     def net_daily_eur(self) -> Decimal:
@@ -28,7 +28,13 @@ class EconomicAttribution:
 
 
 class EconomicAttributionLedger:
-    """Stores verified economic observations with execution provenance."""
+    """Stores verified economic observations with execution provenance.
+
+    A verified productive outcome is not valid without an externally verifiable
+    reference. The external reference is also the idempotency key: reusing it
+    with different economic facts is rejected instead of silently overwriting
+    the original observation.
+    """
 
     def __init__(self) -> None:
         self._entries: dict[str, EconomicAttribution] = {}
@@ -55,7 +61,10 @@ class EconomicAttributionLedger:
             raise ValueError("only verified economic observations can be recorded")
         if not governor_decision_id:
             raise ValueError("governor_decision_id is required for attribution")
-        key = external_reference or f"{opportunity_id}:{source_id}"
+        if not external_reference or not external_reference.strip():
+            raise ValueError("verified economic observations require an external_reference")
+
+        key = external_reference.strip()
         entry = EconomicAttribution(
             opportunity_id=opportunity_id,
             source_id=source_id,
@@ -65,11 +74,13 @@ class EconomicAttributionLedger:
             observed_daily_eur=observed,
             variance_daily_eur=observed - expected,
             verified=True,
-            external_reference=external_reference,
+            external_reference=key,
         )
         existing = self._entries.get(key)
-        if existing is not None and existing == entry:
-            return existing
+        if existing is not None:
+            if existing == entry:
+                return existing
+            raise ValueError("external_reference already maps to a different economic observation")
         self._entries[key] = entry
         return entry
 
