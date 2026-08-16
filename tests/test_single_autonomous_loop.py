@@ -9,13 +9,16 @@ def test_production_style_system_has_one_autonomous_schedule(tmp_path):
         calls.append(objective)
         return {"status": "ok", "objective": objective}
 
+    # This test exercises explicit schedule registration; the production
+    # default economic schedule is intentionally disabled for isolation.
     system = AurelixSystem(
         SystemConfig(
             runtime=RuntimeConfig(
                 database_path=str(tmp_path / "system.db"),
                 heartbeat_seconds=2,
                 worker_poll_seconds=0.01,
-            )
+            ),
+            enable_autonomy=False,
         ),
         cycle_handler=cycle_handler,
     )
