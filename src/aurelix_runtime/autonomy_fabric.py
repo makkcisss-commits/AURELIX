@@ -249,6 +249,7 @@ class AutonomyFabric:
             current = self.store.get(execution_id)
             if current and current.status == "running":
                 self.store.finish(execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+            raise
         return self.store.get(execution_id) or job
 
     def close(self) -> None:
