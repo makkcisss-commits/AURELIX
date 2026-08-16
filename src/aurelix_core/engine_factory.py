@@ -53,9 +53,6 @@ class EngineFactory:
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self.policy_engine = PolicyEngine()
-        # The runtime store is the single durable audit sink. Do not create a
-        # second RuntimeStore from AURELIX_AUDIT_DB: that would duplicate the
-        # database connection and create a second persistence authority.
         self.audit = AuditLog(sink=self.runtime.store.record_audit)
         self.governor = Governor(policy=self.policy_engine, audit=self.audit)
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
@@ -86,7 +83,7 @@ class EngineFactory:
         self.resume_coordinator = DurableResumeCoordinator(self.runtime.store)
         self.adaptive_loop.set_resume_executor(self.resume_coordinator.resume)
         if self.config.register_autonomy:
-            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop)
+            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop, governor=self.governor)
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
         self.experiment_executor = configured_executor
