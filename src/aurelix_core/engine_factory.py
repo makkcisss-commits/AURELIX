@@ -53,7 +53,10 @@ class EngineFactory:
         self.config = config or EngineFactoryConfig()
         self.runtime = runtime or AurelixRuntime(self.config.runtime)
         self.policy_engine = PolicyEngine()
-        self.audit = AuditLog()
+        # The runtime store is the single durable audit sink. Do not create a
+        # second RuntimeStore from AURELIX_AUDIT_DB: that would duplicate the
+        # database connection and create a second persistence authority.
+        self.audit = AuditLog(sink=self.runtime.store.record_audit)
         self.governor = Governor(policy=self.policy_engine, audit=self.audit)
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
         self.model_provider = model_provider if model_provider is not None else (DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env())
