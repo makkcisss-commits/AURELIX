@@ -1,10 +1,8 @@
 """Composition root for AURELIX engines and external providers."""
 from __future__ import annotations
-
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
-
 from .academy import AcademyEngine as CuratedAcademy
 from .academy_agent import AcademyAgent
 from .adaptive_loop import AdaptiveLoop
@@ -35,95 +33,57 @@ from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
 from aurelix_runtime.system_developer import SystemDeveloper
 from aurelix_runtime.system_validation import SystemValidation
-
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
-
 @dataclass(frozen=True)
 class EngineFactoryConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     register_autonomy: bool = True
     experiment_executor: ExperimentExecutor | None = None
-
 class EngineFactory:
     """Canonical engine composition root sharing one durable runtime and knowledge store."""
-    def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None,
-                 model_provider: ModelProvider | None = None, research_provider=None,
-                 knowledge: KnowledgeRepository | None = None, repository=None,
-                 experiment_executor: ExperimentExecutor | None = None):
-        self.config = config or EngineFactoryConfig()
-        self.runtime = runtime or AurelixRuntime(self.config.runtime)
-        self.policy_engine = PolicyEngine()
-        self.audit = AuditLog(sink=self.runtime.store.record_audit)
-        self.governor = Governor(policy=self.policy_engine, audit=self.audit)
+    def __init__(self, config: EngineFactoryConfig | None = None, runtime: AurelixRuntime | None = None, model_provider: ModelProvider | None = None, research_provider=None, knowledge: KnowledgeRepository | None = None, repository=None, experiment_executor: ExperimentExecutor | None = None):
+        self.config = config or EngineFactoryConfig(); self.runtime = runtime or AurelixRuntime(self.config.runtime); self.policy_engine = PolicyEngine()
+        self.governor = getattr(self.runtime.store, "_canonical_governor", None)
+        if self.governor is None:
+            self.audit = AuditLog(sink=self.runtime.store.record_audit)
+            self.governor = Governor(policy=self.policy_engine, audit=self.audit)
+            setattr(self.runtime.store, "_canonical_governor", self.governor)
+        else:
+            self.audit = self.governor.audit
         development_mode = os.getenv("AURELIX_MODE", "production").strip().lower() == "development"
         self.model_provider = model_provider if model_provider is not None else (DevelopmentModelProvider() if development_mode else OpenAICompatibleProvider.from_env())
         self.model_gateway = self._build_model_gateway(self.model_provider)
         self.research_provider = research_provider if research_provider is not None else (development_research_provider if development_mode else self._build_research_provider())
-        self.knowledge: KnowledgeRepository = knowledge or SQLiteKnowledgeRepository(self.runtime.store)
-        self.knowledge_learning = KnowledgeLearningService(self.knowledge)
-        self.continuous_intelligence = ContinuousIntelligence()
-        self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
-        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
-        self.research = ResearchEngine(self.research_provider)
-        self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge, self.governor) if self.research_provider else None
-        self.academy = AcademyEngine(self.model_gateway)
-        self.academy_agent = AcademyAgent(self.academy)
-        self.curated_academy = CuratedAcademy()
-        self.knowledge_engine = KnowledgeEngine()
-        self.innovation = InnovationEngine(self.model_gateway)
-        self.experiment = ExperimentEngine()
-        self.evaluation = EvaluationEngine()
-        self.opportunity = OpportunityEngine()
-        self.business = BusinessEngine(require_approval=True)
-        self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store)
-        self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
+        self.knowledge = knowledge or SQLiteKnowledgeRepository(self.runtime.store); self.knowledge_learning = KnowledgeLearningService(self.knowledge)
+        self.continuous_intelligence = ContinuousIntelligence(); self.capability_escalator = CapabilityEscalator(self.continuous_intelligence); self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
+        self.research = ResearchEngine(self.research_provider); self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge, self.governor) if self.research_provider else None
+        self.academy = AcademyEngine(self.model_gateway); self.academy_agent = AcademyAgent(self.academy); self.curated_academy = CuratedAcademy(); self.knowledge_engine = KnowledgeEngine(); self.innovation = InnovationEngine(self.model_gateway); self.experiment = ExperimentEngine(); self.evaluation = EvaluationEngine(); self.opportunity = OpportunityEngine(); self.business = BusinessEngine(require_approval=True)
+        self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store); self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, governor=self.governor, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
-        self.message_fabric = MessageFabric()
-        self.autonomy_fabric = None
-        self.resume_coordinator = DurableResumeCoordinator(self.runtime.store)
-        self.adaptive_loop.set_resume_executor(self.resume_coordinator.resume)
+        self.message_fabric = MessageFabric(); self.autonomy_fabric = None; self.resume_coordinator = DurableResumeCoordinator(self.runtime.store); self.adaptive_loop.set_resume_executor(self.resume_coordinator.resume)
         if self.config.register_autonomy:
-            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop, governor=self.governor)
-            self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
-        configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
-        self.experiment_executor = configured_executor
-        self.experiment_runner: ExperimentRunner = self.runtime.create_experiment_runner(configured_executor)
+            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop, governor=self.governor); self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
+        configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor; self.experiment_executor = configured_executor; self.experiment_runner = self.runtime.create_experiment_runner(configured_executor)
         if configured_executor is not None:
-            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner, after_execute=self.enterprise.continue_after_experiment)
-            self.enterprise.set_experiment_submitter(self.runtime.submit_experiment)
-        if self.autonomy_fabric is not None:
-            self.autonomy_fabric.set_experiment_runner(self.experiment_runner)
-        self.core_evaluation = CoreEvaluationEngine()
-        self.diagnostics = SystemDiagnostics(self)
-        self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
-        self.system_validation = SystemValidation(self)
-        self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer)
-        self.system_orchestrator = SystemOrchestrator(self)
+            self.runtime.register_experiment_runner(configured_executor, runner=self.experiment_runner, after_execute=self.enterprise.continue_after_experiment); self.enterprise.set_experiment_submitter(self.runtime.submit_experiment)
+        if self.autonomy_fabric is not None: self.autonomy_fabric.set_experiment_runner(self.experiment_runner)
+        self.core_evaluation = CoreEvaluationEngine(); self.diagnostics = SystemDiagnostics(self); self.system_developer = SystemDeveloper(self.diagnostics, repository=repository); self.system_validation = SystemValidation(self); self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer); self.system_orchestrator = SystemOrchestrator(self)
 
     def _build_model_gateway(self, provider: ModelProvider | None) -> GovernedModelGateway | None:
         if provider is None: return None
         def policy(request: GenerationRequest) -> bool:
-            decision = self.policy_engine.evaluate(DecisionRequest(actor=Actor(request.actor_id, "engine", AutonomyLevel.A1), action=ActionClass.RESEARCH, reason=request.action, payload={"prompt": request.prompt}))
-            return decision.allowed
+            decision = self.policy_engine.evaluate(DecisionRequest(actor=Actor(request.actor_id, "engine", AutonomyLevel.A1), action=ActionClass.RESEARCH, reason=request.action, payload={"prompt": request.prompt})); return decision.allowed
         def audit(event: str, **metadata: Any) -> None:
-            outcome = "failed" if event.endswith(".failed") else "denied" if event.endswith(".denied") else "requested" if event.endswith(".requested") else "succeeded" if event.endswith(".completed") else "recorded"
-            self.runtime.store.audit(event, str(metadata.get("actor_id", "system")), str(metadata.get("action", "model")), outcome, metadata)
+            outcome = "failed" if event.endswith(".failed") else "denied" if event.endswith(".denied") else "requested" if event.endswith(".requested") else "succeeded" if event.endswith(".completed") else "recorded"; self.runtime.store.audit(event, str(metadata.get("actor_id", "system")), str(metadata.get("action", "model")), outcome, metadata)
         return GovernedModelGateway(provider, policy=policy, audit=audit)
 
     @staticmethod
     def _build_research_provider():
-        provider = os.getenv("AURELIX_RESEARCH_PROVIDER", "http").strip().lower()
-        if provider == "tavily": return TavilyResearchProvider.from_env()
-        return HttpResearchProvider.from_env()
-
+        provider = os.getenv("AURELIX_RESEARCH_PROVIDER", "http").strip().lower(); return TavilyResearchProvider.from_env() if provider == "tavily" else HttpResearchProvider.from_env()
     def research_and_store(self, query: str):
         if self.research_to_knowledge is None: raise RuntimeError("no research provider configured")
         return self.research_to_knowledge.research_and_store(query)
-
-    def run_enterprise_cycle(self, objective: str, *, approved: bool = False):
-        economic_feedback = self.economic_learning_context()
-        return self.enterprise.run(objective, approved=approved, economic_feedback=economic_feedback)
-
+    def run_enterprise_cycle(self, objective: str, *, approved: bool = False): return self.enterprise.run(objective, approved=approved, economic_feedback=self.economic_learning_context())
     def run_system_cycle(self, objective: str): return self.system_orchestrator.run_cycle(objective)
     def record_verified_economic_outcome(self, **kwargs): return self.system_orchestrator.record_verified_economic_outcome(**kwargs)
     def system_status(self): return self.system_orchestrator.status()
