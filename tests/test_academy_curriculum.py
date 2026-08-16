@@ -49,3 +49,19 @@ def test_known_requirement_does_not_create_duplicate_gap(tmp_path: Path) -> None
     curriculum = AcademyCurriculum(store)
     assert curriculum.discover_from_requirement("Python", source="runtime") is None
     store.close()
+
+
+def test_every_role_skill_reference_resolves_to_one_canonical_skill(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "academy.db")
+    curriculum = AcademyCurriculum(store)
+
+    skills = {skill.skill_id for skill in curriculum.skills()}
+    unresolved = {
+        role.role_id: [skill_id for skill_id in role.skills if skill_id not in skills]
+        for role in curriculum.roles()
+    }
+
+    assert all(not missing for missing in unresolved.values())
+    for role in curriculum.roles():
+        assert len(curriculum.role_skills(role.role_id)) == len(role.skills)
+    store.close()
