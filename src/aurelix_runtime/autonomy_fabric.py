@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, is_dataclass, asdict
+from decimal import Decimal
 import json
 import threading
 from typing import Any
@@ -22,6 +23,8 @@ from .research_provider import HttpResearchProvider
 def _jsonable(value: Any) -> Any:
     if is_dataclass(value):
         return _jsonable(asdict(value))
+    if isinstance(value, Decimal):
+        return str(value)
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
