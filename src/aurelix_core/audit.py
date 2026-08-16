@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
@@ -29,16 +30,23 @@ class AuditEvent:
 class AuditLog:
     """Thread-safe audit boundary with an optional durable append-only sink.
 
-    The in-memory collection remains useful for local inspection and tests, but
-    production composition must provide a durable sink. Sink failures propagate:
-    a protected decision must not be treated as successful when its audit trail
-    cannot be durably recorded.
+    Production composition can provide a sink directly. When AURELIX_AUDIT_DB
+    is configured, the canonical runtime SQLite store is used automatically.
+    Sink failures propagate: a protected decision must not be treated as
+    successful when its audit trail cannot be durably recorded.
     """
 
     def __init__(self, sink: AuditSink | None = None) -> None:
         self._events: list[AuditEvent] = []
         self._lock = Lock()
         self._sink = sink
+        self._runtime_store = None
+        if self._sink is None:
+            audit_db = os.getenv("AURELIX_AUDIT_DB")
+            if audit_db:
+                from aurelix_runtime.persistence import RuntimeStore
+                self._runtime_store = RuntimeStore(audit_db)
+                self._sink = self._runtime_store.record_audit
 
     def append(self, event: AuditEvent) -> None:
         with self._lock:
