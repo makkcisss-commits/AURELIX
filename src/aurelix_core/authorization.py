@@ -39,13 +39,18 @@ class AuthorizationPolicy:
 
 
 def owner_read_only_policy(identity_id: str) -> AuthorizationPolicy:
-    """Explicitly grant only the currently exposed private API operations."""
+    """Explicitly grant only the private API operations exposed by the owner role."""
     resources = {
         Capability("control", "snapshot", "private"),
         Capability("control", "experiments.read", "private"),
         Capability("control", "knowledge.read", "private"),
         Capability("control", "audit.read", "private"),
+        Capability("control", "autonomy.read", "private"),
+        Capability("control", "diagnostics.read", "private"),
+        Capability("control", "validation.read", "private"),
         Capability("actions", "research.execute", "private"),
         Capability("actions", "experiments.execute", "private"),
+        Capability("actions", "objectives.submit", "private"),
+        Capability("actions", "economic.outcome.record", "private"),
     }
     return AuthorizationPolicy({identity_id: frozenset(resources)})

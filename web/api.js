@@ -15,7 +15,6 @@
 
   async function request(path, secret, options = {}) {
     const response = await fetch(`${baseUrl()}${path}`, {
-      credentials: 'include',
       cache: 'no-store',
       ...options,
       headers: { ...headers(secret, Boolean(options.body)), ...(options.headers || {}) }
@@ -28,18 +27,35 @@
   }
 
   const getSnapshot = (secret) => request('/v1/control/snapshot', secret);
-  const getExperiments = (secret, status) => request(`/v1/control/experiments${status ? `?status=${encodeURIComponent(status)}` : ''}`, secret);
+  const getExperiments = (secret, state) => request(`/v1/control/experiments${state ? `?status=${encodeURIComponent(state)}` : ''}`, secret);
   const getKnowledge = (secret, query = '', limit = 20) => request(`/v1/control/knowledge?q=${encodeURIComponent(query)}&limit=${limit}`, secret);
   const getAudit = (secret, limit = 50) => request(`/v1/control/audit?limit=${limit}`, secret);
+  const getAutonomy = (secret) => request('/v1/control/autonomy', secret);
+  const getDiagnostics = (secret) => request('/v1/control/diagnostics', secret);
+  const getValidation = (secret) => request('/v1/control/validation', secret);
   const research = (secret, query) => request('/v1/actions/research', secret, {
     method: 'POST',
     body: JSON.stringify({ query })
   });
-  const executeExperiment = (secret, experimentId, observations = []) => request(
-    `/v1/actions/experiments/${encodeURIComponent(experimentId)}/execute`,
-    secret,
-    { method: 'POST', body: JSON.stringify({ observations }) }
-  );
+  const submitObjective = (secret, objective) => request('/v1/actions/objectives', secret, {
+    method: 'POST',
+    body: JSON.stringify({ objective })
+  });
+  const recordEconomicOutcome = (secret, outcome) => request('/v1/actions/economic/outcomes', secret, {
+    method: 'POST',
+    body: JSON.stringify(outcome)
+  });
 
-  window.AURELIX_API = { getSnapshot, getExperiments, getKnowledge, getAudit, research, executeExperiment };
+  window.AURELIX_API = {
+    getSnapshot,
+    getExperiments,
+    getKnowledge,
+    getAudit,
+    getAutonomy,
+    getDiagnostics,
+    getValidation,
+    research,
+    submitObjective,
+    recordEconomicOutcome
+  };
 })();

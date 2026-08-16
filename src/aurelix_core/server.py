@@ -5,18 +5,17 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .authorization import AuthorizationDenied, owner_read_only_policy
 from .dashboard_page import render_dashboard
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
 from .http_server import PrivateReadOnlyApi, ReadOnlyRequest
-from .identity import Identity, register_secret
+from .identity import AuthenticationError, Identity, authenticate, register_secret
 from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
@@ -65,16 +64,6 @@ class EconomicOutcomeRequest(BaseModel):
     external_reference: str | None = Field(default=None, max_length=500)
 
 
-class DevelopmentRequest(BaseModel):
-    objective: str = Field(min_length=1, max_length=2000)
-    scope: list[str] = Field(default_factory=list, max_length=30)
-
-
-class DevelopmentApprovalRequest(BaseModel):
-    plan: dict[str, Any]
-    approved: bool
-
-
 def _live_snapshot() -> dict:
     if _factory is None or _runtime is None:
         return {**SystemSnapshot(system="DEGRADED").public(), "error": "runtime_initialization_failed", "error_type": _factory_error}
@@ -111,9 +100,21 @@ _api = PrivateReadOnlyApi(DashboardService(snapshot_provider=_live_snapshot), ex
 
 
 def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOnlyRequest:
+    """Authenticate before any protected endpoint reaches business logic."""
     if _credential is None or x_aurelix_secret is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+    try:
+        authenticate(_identity, _credential, x_aurelix_secret)
+    except AuthenticationError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_failed") from None
     return ReadOnlyRequest(_identity, _credential, x_aurelix_secret)
+
+
+def require_scope(request: ReadOnlyRequest, resource: str, operation: str) -> None:
+    try:
+        owner_read_only_policy(request.identity.id).authorize(request.identity, resource, operation, "private")
+    except AuthorizationDenied:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="authorization_denied") from None
 
 
 @asynccontextmanager
@@ -124,10 +125,7 @@ async def lifespan(app: FastAPI):
         enabled = os.getenv("AURELIX_AUTONOMY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
         if enabled:
             interval = float(os.getenv("AURELIX_AUTONOMY_INTERVAL_SECONDS", "900"))
-            objective = os.getenv(
-                "AURELIX_AUTONOMY_OBJECTIVE",
-                "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
-            )
+            objective = os.getenv("AURELIX_AUTONOMY_OBJECTIVE", "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.")
             _system.schedule_system_cycle("economic-discovery", interval, objective)
             thread = _system_thread
             if thread is None or not thread.is_alive():
@@ -144,14 +142,7 @@ async def lifespan(app: FastAPI):
         _system_thread = None
 
 
-app = FastAPI(
-    title="AURELIX Private API",
-    version="0.4.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-    lifespan=lifespan,
-)
+app = FastAPI(title="AURELIX Private API", version="0.4.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
 @app.get("/", include_in_schema=False)
@@ -183,6 +174,7 @@ def snapshot(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/autonomy")
 def autonomy_status(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "autonomy.read")
     if _system is None or _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return {"system": _system.health(), "orchestrator": _factory.system_status()}
@@ -190,6 +182,7 @@ def autonomy_status(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/diagnostics")
 def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "diagnostics.read")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return _factory.diagnose()
@@ -197,6 +190,7 @@ def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/validation")
 def validation(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "validation.read")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return _factory.validate_system()
@@ -228,6 +222,7 @@ def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.post("/v1/actions/research")
 def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "research.execute")
     if _flow is None or _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     if _factory.research_provider is None:
@@ -238,8 +233,22 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
         raise HTTPException(status_code=502, detail=f"research_flow_failed: {type(exc).__name__}") from exc
 
 
+@app.post("/v1/actions/experiments/{experiment_id}/execute")
+def execute_experiment(experiment_id: str, payload: ExperimentExecutionRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "experiments.execute")
+    if _flow is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    try:
+        return _flow.execute_experiment(experiment_id, payload.observations)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="experiment_not_found") from None
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"experiment_execution_rejected: {type(exc).__name__}") from exc
+
+
 @app.post("/v1/actions/objectives")
 def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "objectives.submit")
     if _system is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     job_id = _system.submit("system.cycle", {"objective": payload.objective})
@@ -248,6 +257,7 @@ def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depen
 
 @app.post("/v1/actions/economic/outcomes")
 def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "economic.outcome.record")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     try:
@@ -268,13 +278,7 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
 
 def main() -> None:
     import uvicorn
-
-    uvicorn.run(
-        "aurelix_core.server:app",
-        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
-        port=int(os.getenv("AURELIX_PORT", "8000")),
-        reload=False,
-    )
+    uvicorn.run("aurelix_core.server:app", host=os.getenv("AURELIX_HOST", "127.0.0.1"), port=int(os.getenv("AURELIX_PORT", "8000")), reload=False)
 
 
 if __name__ == "__main__":
