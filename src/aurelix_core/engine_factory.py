@@ -80,7 +80,7 @@ class EngineFactory:
         self.business = BusinessEngine(require_approval=True)
         self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store)
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
-        self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
+        self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, governor=self.governor, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
         self.resume_coordinator = DurableResumeCoordinator(self.runtime.store)
