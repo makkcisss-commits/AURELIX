@@ -130,8 +130,9 @@ class AutonomyFabric:
         if not objective:
             raise ValueError("research objective is required")
         required_capabilities = required_capabilities or list(claimed.payload.get("required_capabilities", []))
-        mission = EconomicMission(objective, source="autonomy", mission_id=mission_id or str(uuid4()), constraints={"execution_id": execution_id})
-        mission_id = mission.mission_id
+        persisted_mission_id = str(claimed.payload.get("mission_id", "")).strip()
+        mission_id = mission_id or persisted_mission_id or str(uuid4())
+        mission = EconomicMission(objective, source="autonomy", mission_id=mission_id, constraints={"execution_id": execution_id})
         if self.adaptive_loop is not None:
             self.adaptive_loop.register_mission(execution_id, objective, required_capabilities, mission_id=mission_id)
         if required_capabilities:
@@ -188,7 +189,8 @@ class AutonomyFabric:
 
     def run(self, objective: str, execution_id: str | None = None, required_capabilities: list[str] | None = None, mission_id: str | None = None) -> AutonomyRun:
         execution_id = execution_id or str(uuid4())
-        job = self.store.enqueue("autonomy.run", {"objective": objective, "required_capabilities": required_capabilities or [], **({"mission_id": mission_id} if mission_id else {})}, execution_id=execution_id)
+        mission_id = mission_id or str(uuid4())
+        job = self.store.enqueue("autonomy.run", {"objective": objective, "required_capabilities": required_capabilities or [], "mission_id": mission_id}, execution_id=execution_id)
         worker_id = f"autonomy:{execution_id}"
         claimed = self.store.claim(job.job_id, worker_id=worker_id)
         if claimed is None:
