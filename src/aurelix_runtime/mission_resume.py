@@ -13,7 +13,9 @@ class MissionState:
     objective: str
     required_capabilities: tuple[str, ...]
     status: str
+    parent_execution_id: str | None
     active_execution_id: str | None
+    failed_execution_id: str | None
     resume_state: str | None
     updated_at: str
 
@@ -29,11 +31,19 @@ class MissionResumeCoordinator:
                 objective TEXT NOT NULL,
                 required_capabilities TEXT NOT NULL,
                 status TEXT NOT NULL,
+                parent_execution_id TEXT,
                 active_execution_id TEXT,
+                failed_execution_id TEXT,
                 resume_state TEXT,
                 updated_at TEXT NOT NULL
             )""")
+            columns = {row["name"] for row in self.store.db.execute("PRAGMA table_info(mission_state)")}
+            if "parent_execution_id" not in columns:
+                self.store.db.execute("ALTER TABLE mission_state ADD COLUMN parent_execution_id TEXT")
+            if "failed_execution_id" not in columns:
+                self.store.db.execute("ALTER TABLE mission_state ADD COLUMN failed_execution_id TEXT")
             self.store.db.execute("CREATE INDEX IF NOT EXISTS idx_mission_state_active ON mission_state(active_execution_id)")
+            self.store.db.execute("CREATE INDEX IF NOT EXISTS idx_mission_state_failed ON mission_state(failed_execution_id)")
 
     @staticmethod
     def _now() -> str:
@@ -43,7 +53,8 @@ class MissionResumeCoordinator:
     def _record(row) -> MissionState:
         return MissionState(
             row["mission_id"], row["objective"], tuple(json.loads(row["required_capabilities"])),
-            row["status"], row["active_execution_id"], row["resume_state"], row["updated_at"],
+            row["status"], row["parent_execution_id"], row["active_execution_id"],
+            row["failed_execution_id"], row["resume_state"], row["updated_at"],
         )
 
     def register(self, *, mission_id: str, objective: str, required_capabilities: list[str]) -> MissionState:
@@ -61,8 +72,8 @@ class MissionResumeCoordinator:
                     self.store.db.commit()
                     return self._record(row)
                 self.store.db.execute(
-                    "INSERT INTO mission_state VALUES(?,?,?,?,?,?,?)",
-                    (mission_id, objective, json.dumps(capabilities), "active", None, None, now),
+                    "INSERT INTO mission_state(mission_id,objective,required_capabilities,status,parent_execution_id,active_execution_id,failed_execution_id,resume_state,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (mission_id, objective, json.dumps(capabilities), "active", None, None, None, None, now),
                 )
                 self.store.db.commit()
                 return self.get(mission_id)
@@ -74,7 +85,7 @@ class MissionResumeCoordinator:
         now = self._now()
         with self.store.lock, self.store.db:
             cursor = self.store.db.execute(
-                "UPDATE mission_state SET status='blocked', active_execution_id=?, resume_state=?, updated_at=? WHERE mission_id=?",
+                "UPDATE mission_state SET status='blocked', active_execution_id=?, failed_execution_id=NULL, resume_state=?, updated_at=? WHERE mission_id=?",
                 (execution_id, reason, now, mission_id),
             )
             if cursor.rowcount != 1:
@@ -109,7 +120,7 @@ class MissionResumeCoordinator:
                     (execution_id, "autonomy.run", json.dumps(payload, sort_keys=True), "queued", 0, now, now),
                 )
                 cursor = self.store.db.execute(
-                    "UPDATE mission_state SET status='resume_reserved', active_execution_id=?, updated_at=? WHERE mission_id=? AND status='blocked'",
+                    "UPDATE mission_state SET status='resume_reserved', active_execution_id=?, failed_execution_id=NULL, updated_at=? WHERE mission_id=? AND status='blocked'",
                     (execution_id, now, mission_id),
                 )
                 if cursor.rowcount != 1:
@@ -127,7 +138,7 @@ class MissionResumeCoordinator:
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
-                row = self.store.db.execute("SELECT status, active_execution_id FROM mission_state WHERE mission_id=?", (mission_id,)).fetchone()
+                row = self.store.db.execute("SELECT status, active_execution_id, parent_execution_id FROM mission_state WHERE mission_id=?", (mission_id,)).fetchone()
                 if row is None:
                     raise KeyError(mission_id)
                 if row["status"] == "resume_reserved" and row["active_execution_id"] == execution_id:
@@ -136,8 +147,8 @@ class MissionResumeCoordinator:
                         (now, execution_id),
                     )
                     self.store.db.execute(
-                        "UPDATE mission_state SET status='blocked', active_execution_id=NULL, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
-                        (now, mission_id, execution_id),
+                        "UPDATE mission_state SET status='blocked', parent_execution_id=COALESCE(?, parent_execution_id), active_execution_id=NULL, failed_execution_id=?, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
+                        (parent_execution_id, execution_id, now, mission_id, execution_id),
                     )
                 self.store.db.commit()
                 return self.get(mission_id)
@@ -149,7 +160,7 @@ class MissionResumeCoordinator:
         now = self._now()
         with self.store.lock, self.store.db:
             cursor = self.store.db.execute(
-                "UPDATE mission_state SET status='active', active_execution_id=?, resume_state=NULL, updated_at=? WHERE mission_id=? AND active_execution_id=?",
+                "UPDATE mission_state SET status='active', active_execution_id=?, failed_execution_id=NULL, resume_state=NULL, updated_at=? WHERE mission_id=? AND active_execution_id=?",
                 (execution_id, now, mission_id, execution_id),
             )
             if cursor.rowcount != 1:
