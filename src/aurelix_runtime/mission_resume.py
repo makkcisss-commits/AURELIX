@@ -148,15 +148,39 @@ class MissionResumeCoordinator:
                 self.store.db.rollback()
                 raise
 
+    def release_resume(self, *, mission_id: str, execution_id: str, parent_execution_id: str | None) -> MissionState:
+        """Undo a reservation that never acquired a lease, without leaving an orphaned mission."""
+        now = self._now()
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.db.execute(
+                    "SELECT status, active_execution_id FROM mission_state WHERE mission_id=?", (mission_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError(mission_id)
+                if row["status"] == "resume_reserved" and row["active_execution_id"] == execution_id:
+                    self.store.db.execute("DELETE FROM jobs WHERE job_id=? AND status='queued'", (execution_id,))
+                    self.store.db.execute(
+                        "UPDATE mission_state SET status='blocked', active_execution_id=?, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
+                        (parent_execution_id, now, mission_id, execution_id),
+                    )
+                self.store.db.commit()
+                row = self.store.db.execute("SELECT * FROM mission_state WHERE mission_id=?", (mission_id,)).fetchone()
+                return self._record(row)
+            except Exception:
+                self.store.db.rollback()
+                raise
+
     def activate(self, *, mission_id: str, execution_id: str) -> MissionState:
         now = self._now()
         with self.store.lock, self.store.db:
             cursor = self.store.db.execute(
-                "UPDATE mission_state SET status='active', active_execution_id=?, resume_state=NULL, updated_at=? WHERE mission_id=?",
-                (execution_id, now, mission_id),
+                "UPDATE mission_state SET status='active', active_execution_id=?, resume_state=NULL, updated_at=? WHERE mission_id=? AND active_execution_id=?",
+                (execution_id, now, mission_id, execution_id),
             )
             if cursor.rowcount != 1:
-                raise KeyError(mission_id)
+                raise RuntimeError("mission activation fenced: execution is no longer authoritative")
             row = self.store.db.execute("SELECT * FROM mission_state WHERE mission_id=?", (mission_id,)).fetchone()
         return self._record(row)
 
