@@ -8,3 +8,5 @@ venv/
 !.env.example
 *.log
 .DS_Store
+.lsp/cache/
+*.db
