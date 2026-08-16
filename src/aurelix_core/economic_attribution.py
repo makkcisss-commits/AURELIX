@@ -5,7 +5,8 @@ outcomes but never authorizes execution and never treats forecasts as revenue.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -28,16 +29,56 @@ class EconomicAttribution:
 
 
 class EconomicAttributionLedger:
-    """Stores verified economic observations with execution provenance.
+    """Durable, idempotent ledger for verified economic observations."""
 
-    A verified productive outcome is not valid without an externally verifiable
-    reference. The external reference is also the idempotency key: reusing it
-    with different economic facts is rejected instead of silently overwriting
-    the original observation.
-    """
+    _STATE_KEY = "economic.attribution.ledger"
 
-    def __init__(self) -> None:
+    def __init__(self, store=None) -> None:
+        self.store = store
         self._entries: dict[str, EconomicAttribution] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if self.store is None:
+            return
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT value FROM runtime_state WHERE key=?", (self._STATE_KEY,)
+            ).fetchone()
+        data = json.loads(row[0]) if row else {}
+        self._entries = {
+            key: EconomicAttribution(
+                opportunity_id=value["opportunity_id"],
+                source_id=value["source_id"],
+                governor_decision_id=value.get("governor_decision_id"),
+                resource_scope=value.get("resource_scope"),
+                expected_daily_eur=Decimal(value["expected_daily_eur"]),
+                observed_daily_eur=Decimal(value["observed_daily_eur"]),
+                variance_daily_eur=Decimal(value["variance_daily_eur"]),
+                verified=bool(value["verified"]),
+                external_reference=value["external_reference"],
+            )
+            for key, value in data.items()
+        }
+
+    def _persist(self) -> None:
+        if self.store is None:
+            return
+        payload = {
+            key: {
+                **asdict(entry),
+                "expected_daily_eur": str(entry.expected_daily_eur),
+                "observed_daily_eur": str(entry.observed_daily_eur),
+                "variance_daily_eur": str(entry.variance_daily_eur),
+            }
+            for key, entry in self._entries.items()
+        }
+        with self.store.lock, self.store.db:
+            self.store.db.execute(
+                "INSERT INTO runtime_state(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (self._STATE_KEY, json.dumps(payload, sort_keys=True)),
+            )
 
     def record(
         self,
@@ -82,6 +123,7 @@ class EconomicAttributionLedger:
                 return existing
             raise ValueError("external_reference already maps to a different economic observation")
         self._entries[key] = entry
+        self._persist()
         return entry
 
     def all(self) -> list[EconomicAttribution]:
