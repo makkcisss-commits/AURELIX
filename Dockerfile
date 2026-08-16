@@ -16,7 +16,12 @@ COPY src ./src
 COPY web ./web
 
 RUN python -m pip install --no-cache-dir . \
-    && mkdir -p /app/data
+    && addgroup --system --gid 10001 aurelix \
+    && adduser --system --uid 10001 --ingroup aurelix --home /nonexistent --no-create-home aurelix \
+    && mkdir -p /app/data \
+    && chown -R aurelix:aurelix /app
+
+USER 10001:10001
 
 EXPOSE 8000
 
