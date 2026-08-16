@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .capability_escalation import CapabilityEscalator
 from .continuous_intelligence import ContinuousIntelligence, Evidence, EvidenceKind, EvaluationStatus
@@ -15,26 +15,39 @@ class AdaptiveMission:
     required_capabilities: tuple[str, ...] = ()
     blocked: bool = False
     capability_gap_ids: tuple[str, ...] = ()
+    mission_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.execution_id.strip() or not self.objective.strip():
+            raise ValueError("execution_id and objective are required")
+        if not self.mission_id:
+            object.__setattr__(self, "mission_id", self.execution_id)
 
 
 @dataclass
 class AdaptiveLoop:
     """One shared coordination boundary for AURELIX's adaptive lifecycle.
 
-    It owns coordination state only. Runtime/Governor remain the authorization
-    boundary; learning never grants execution authority by itself.
+    Runtime/Governor remain the authorization boundary. The optional
+    ``resume_executor`` is only a handoff into that canonical runtime; learning
+    itself never grants execution authority.
     """
 
     intelligence: ContinuousIntelligence
     capability_escalator: CapabilityEscalator
     missions: dict[str, AdaptiveMission] = field(default_factory=dict)
     _capability_missions: dict[str, set[str]] = field(default_factory=dict)
+    resume_executor: Callable[[AdaptiveMission], Any] | None = field(default=None, repr=False)
 
     def register_mission(self, execution_id: str, objective: str,
-                         required_capabilities: list[str] | tuple[str, ...] = ()) -> AdaptiveMission:
+                         required_capabilities: list[str] | tuple[str, ...] = (),
+                         mission_id: str | None = None) -> AdaptiveMission:
         if not execution_id.strip() or not objective.strip():
             raise ValueError("execution_id and objective are required")
-        mission = AdaptiveMission(execution_id, objective, tuple(required_capabilities))
+        mission = AdaptiveMission(
+            execution_id, objective, tuple(required_capabilities),
+            mission_id=mission_id or execution_id,
+        )
         self.missions[execution_id] = mission
         return mission
 
@@ -50,6 +63,7 @@ class AdaptiveLoop:
         updated = AdaptiveMission(
             mission.execution_id, mission.objective, mission.required_capabilities,
             blocked=True, capability_gap_ids=(*mission.capability_gap_ids, gap.gap_id),
+            mission_id=mission.mission_id,
         )
         self.missions[execution_id] = updated
         return updated, objective
@@ -104,6 +118,9 @@ class AdaptiveLoop:
         return all(self.capability_validated(capability)
                    for capability in mission.required_capabilities)
 
+    def set_resume_executor(self, executor: Callable[[AdaptiveMission], Any] | None) -> None:
+        self.resume_executor = executor
+
     def resume_ready(self, execution_id: str) -> AdaptiveMission:
         mission = self.missions.get(execution_id)
         if mission is None:
@@ -113,6 +130,9 @@ class AdaptiveLoop:
         updated = AdaptiveMission(
             mission.execution_id, mission.objective, mission.required_capabilities,
             blocked=False, capability_gap_ids=mission.capability_gap_ids,
+            mission_id=mission.mission_id,
         )
         self.missions[execution_id] = updated
+        if self.resume_executor is not None:
+            self.resume_executor(updated)
         return updated
