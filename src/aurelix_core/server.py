@@ -12,11 +12,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .authorization import AuthorizationDenied, owner_read_only_policy
 from .dashboard_page import render_dashboard
 from .dashboard_service import DashboardService
 from .engine_factory import EngineFactory
 from .http_server import PrivateReadOnlyApi, ReadOnlyRequest
-from .identity import Identity, register_secret
+from .identity import AuthenticationError, Identity, authenticate, register_secret
 from .intelligence_flow import IntelligenceFlow
 from .system_snapshot import SystemSnapshot
 from aurelix_runtime.knowledge_store import KnowledgeQuery
@@ -111,9 +112,21 @@ _api = PrivateReadOnlyApi(DashboardService(snapshot_provider=_live_snapshot), ex
 
 
 def require_owner(x_aurelix_secret: str | None = Header(default=None)) -> ReadOnlyRequest:
+    """Authenticate before any protected endpoint reaches business logic."""
     if _credential is None or x_aurelix_secret is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+    try:
+        authenticate(_identity, _credential, x_aurelix_secret)
+    except AuthenticationError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_failed") from None
     return ReadOnlyRequest(_identity, _credential, x_aurelix_secret)
+
+
+def require_scope(request: ReadOnlyRequest, resource: str, operation: str) -> None:
+    try:
+        owner_read_only_policy(request.identity.id).authorize(request.identity, resource, operation, "private")
+    except AuthorizationDenied:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="authorization_denied") from None
 
 
 @asynccontextmanager
@@ -183,6 +196,7 @@ def snapshot(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/autonomy")
 def autonomy_status(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "autonomy.read")
     if _system is None or _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return {"system": _system.health(), "orchestrator": _factory.system_status()}
@@ -190,6 +204,7 @@ def autonomy_status(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/diagnostics")
 def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "diagnostics.read")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return _factory.diagnose()
@@ -197,6 +212,7 @@ def diagnostics(request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.get("/v1/control/validation")
 def validation(request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "control", "validation.read")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     return _factory.validate_system()
@@ -228,6 +244,7 @@ def audit(limit: int = 50, request: ReadOnlyRequest = Depends(require_owner)):
 
 @app.post("/v1/actions/research")
 def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "research.execute")
     if _flow is None or _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     if _factory.research_provider is None:
@@ -240,6 +257,7 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
 
 @app.post("/v1/actions/objectives")
 def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "objectives.submit")
     if _system is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     job_id = _system.submit("system.cycle", {"objective": payload.objective})
@@ -248,6 +266,7 @@ def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depen
 
 @app.post("/v1/actions/economic/outcomes")
 def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "economic.outcome.record")
     if _factory is None:
         raise HTTPException(status_code=503, detail="runtime_unavailable")
     try:
