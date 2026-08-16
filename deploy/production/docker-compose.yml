@@ -1,20 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: aurelix
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-      POSTGRES_DB: aurelix
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aurelix -d aurelix"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    restart: unless-stopped
-
   aurelix:
     build:
       context: ../..
@@ -31,19 +15,13 @@ services:
       AURELIX_MODEL_API_KEY: ${AURELIX_MODEL_API_KEY:?set AURELIX_MODEL_API_KEY}
       AURELIX_RESEARCH_PROVIDER: tavily
       AURELIX_RESEARCH_API_KEY: ${AURELIX_RESEARCH_API_KEY:?set AURELIX_RESEARCH_API_KEY}
-      AURELIX_DATABASE_URL: postgresql://aurelix:${POSTGRES_PASSWORD}@postgres:5432/aurelix
       AURELIX_AUTONOMY_ENABLED: ${AURELIX_AUTONOMY_ENABLED:-true}
       AURELIX_AUTONOMY_INTERVAL_SECONDS: ${AURELIX_AUTONOMY_INTERVAL_SECONDS:-900}
       AURELIX_AUTONOMY_OBJECTIVE: ${AURELIX_AUTONOMY_OBJECTIVE:-Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.}
     volumes:
-      # RuntimeStore uses the local SQLite database for durable jobs, audit and
-      # experiment state. Keep it on a named volume so container recreation does
-      # not silently erase that state in the single-host production deployment.
+      # RuntimeStore is currently SQLite-backed. Keep the durable database on a
+      # named volume so container recreation does not silently erase state.
       - runtime_data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-        restart: true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
@@ -69,7 +47,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
   runtime_data:
   caddy_data:
   caddy_config:
