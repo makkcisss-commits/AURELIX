@@ -138,12 +138,11 @@ class AcademyEngine:
             raise ValueError("knowledge must reference at least one learning")
         if not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
-        if self.store is None:
-            raise RuntimeError("Academy durable knowledge store is not configured")
         item = Knowledge(
             str(uuid4()), title, summary, tuple(learning_refs), tuple(source_refs), confidence
         )
-        self._persist_item(item)
+        if self.store is not None:
+            self._persist_item(item)
         self._knowledge[item.knowledge_id] = item
         return item
 
