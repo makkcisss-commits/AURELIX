@@ -99,3 +99,12 @@ def test_system_orchestrator_uses_factory_owned_academy_and_intelligence(tmp_pat
         assert factory.system_orchestrator.academy_bridge.intelligence is factory.continuous_intelligence
     finally:
         factory.runtime.close()
+
+
+def test_factory_exposes_canonical_opportunity_revenue_bridge(tmp_path):
+    factory = EngineFactory(EngineFactoryConfig(runtime=RuntimeConfig(database_path=str(tmp_path / "aurelix.db")), register_autonomy=False))
+    try:
+        assert factory.opportunity_revenue_bridge.revenue.revenue is factory.revenue
+        assert factory.durable_revenue.revenue is factory.revenue
+    finally:
+        factory.runtime.close()
