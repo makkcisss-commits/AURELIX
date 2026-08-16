@@ -23,7 +23,7 @@ from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.experiment_runner import ExperimentRunner
-from aurelix_runtime.integrated_engines import AcademyEngine as RuntimeAcademyEngine, BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine
+from aurelix_runtime.integrated_engines import BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine
 from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledgeRepository
 from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
@@ -65,10 +65,12 @@ class EngineFactory:
         self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
-        # RuntimeAcademyEngine executes the research->lesson stage; AcademyEngine is
-        # the single canonical knowledge/projection authority used by orchestration.
-        self.academy_runtime = RuntimeAcademyEngine(self.model_gateway)
-        self.academy = AcademyEngine(store=self.runtime.store)
+
+        # One Academy object owns both the execution adapter and durable knowledge.
+        # There is deliberately no second Academy state container.
+        self.academy = AcademyEngine(store=self.runtime.store, model_gateway=self.model_gateway)
+        self.academy_runtime = self.academy
+        self.curated_academy = self.academy
         self.academy_agent = AcademyAgent(self.academy)
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
@@ -78,11 +80,11 @@ class EngineFactory:
         self.business = BusinessEngine(require_approval=True)
         self.revenue_portfolio = RevenuePortfolio()
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
-        self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy_runtime, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
+        self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
         self.autonomy_fabric = None
         if self.config.register_autonomy:
-            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy_runtime, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop)
+            self.autonomy_fabric = AutonomyFabric(store=self.runtime.store, engine_store=self.enterprise.store, research=self.research, academy=self.academy, knowledge=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business, message_fabric=self.message_fabric, capability_escalator=self.capability_escalator, adaptive_loop=self.adaptive_loop)
             self.runtime.register_claimed("autonomy.run", self.autonomy_fabric.run_claimed)
         configured_executor = experiment_executor if experiment_executor is not None else self.config.experiment_executor
         self.experiment_executor = configured_executor
