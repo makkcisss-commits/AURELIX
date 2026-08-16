@@ -5,11 +5,9 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .authorization import AuthorizationDenied, owner_read_only_policy
@@ -64,16 +62,6 @@ class EconomicOutcomeRequest(BaseModel):
     governor_decision_id: str = Field(min_length=1, max_length=200)
     resource_scope: str | None = Field(default=None, max_length=500)
     external_reference: str | None = Field(default=None, max_length=500)
-
-
-class DevelopmentRequest(BaseModel):
-    objective: str = Field(min_length=1, max_length=2000)
-    scope: list[str] = Field(default_factory=list, max_length=30)
-
-
-class DevelopmentApprovalRequest(BaseModel):
-    plan: dict[str, Any]
-    approved: bool
 
 
 def _live_snapshot() -> dict:
@@ -137,10 +125,7 @@ async def lifespan(app: FastAPI):
         enabled = os.getenv("AURELIX_AUTONOMY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
         if enabled:
             interval = float(os.getenv("AURELIX_AUTONOMY_INTERVAL_SECONDS", "900"))
-            objective = os.getenv(
-                "AURELIX_AUTONOMY_OBJECTIVE",
-                "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.",
-            )
+            objective = os.getenv("AURELIX_AUTONOMY_OBJECTIVE", "Continuously inspect AURELIX, research useful opportunities, validate learning, and prepare governed next actions.")
             _system.schedule_system_cycle("economic-discovery", interval, objective)
             thread = _system_thread
             if thread is None or not thread.is_alive():
@@ -157,14 +142,7 @@ async def lifespan(app: FastAPI):
         _system_thread = None
 
 
-app = FastAPI(
-    title="AURELIX Private API",
-    version="0.4.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-    lifespan=lifespan,
-)
+app = FastAPI(title="AURELIX Private API", version="0.4.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
 @app.get("/", include_in_schema=False)
@@ -255,6 +233,19 @@ def research_action(payload: ResearchRequest, request: ReadOnlyRequest = Depends
         raise HTTPException(status_code=502, detail=f"research_flow_failed: {type(exc).__name__}") from exc
 
 
+@app.post("/v1/actions/experiments/{experiment_id}/execute")
+def execute_experiment(experiment_id: str, payload: ExperimentExecutionRequest, request: ReadOnlyRequest = Depends(require_owner)):
+    require_scope(request, "actions", "experiments.execute")
+    if _flow is None:
+        raise HTTPException(status_code=503, detail="runtime_unavailable")
+    try:
+        return _flow.execute_experiment(experiment_id, payload.observations)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="experiment_not_found") from None
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"experiment_execution_rejected: {type(exc).__name__}") from exc
+
+
 @app.post("/v1/actions/objectives")
 def submit_objective(payload: ObjectiveRequest, request: ReadOnlyRequest = Depends(require_owner)):
     require_scope(request, "actions", "objectives.submit")
@@ -287,13 +278,7 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
 
 def main() -> None:
     import uvicorn
-
-    uvicorn.run(
-        "aurelix_core.server:app",
-        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
-        port=int(os.getenv("AURELIX_PORT", "8000")),
-        reload=False,
-    )
+    uvicorn.run("aurelix_core.server:app", host=os.getenv("AURELIX_HOST", "127.0.0.1"), port=int(os.getenv("AURELIX_PORT", "8000")), reload=False)
 
 
 if __name__ == "__main__":

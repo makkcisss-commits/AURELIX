@@ -49,6 +49,7 @@ def owner_read_only_policy(identity_id: str) -> AuthorizationPolicy:
         Capability("control", "diagnostics.read", "private"),
         Capability("control", "validation.read", "private"),
         Capability("actions", "research.execute", "private"),
+        Capability("actions", "experiments.execute", "private"),
         Capability("actions", "objectives.submit", "private"),
         Capability("actions", "economic.outcome.record", "private"),
     }
