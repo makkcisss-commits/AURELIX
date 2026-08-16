@@ -264,3 +264,18 @@ def record_economic_outcome(payload: EconomicOutcomeRequest, request: ReadOnlyRe
         }
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"economic_outcome_rejected: {type(exc).__name__}") from exc
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "aurelix_core.server:app",
+        host=os.getenv("AURELIX_HOST", "127.0.0.1"),
+        port=int(os.getenv("AURELIX_PORT", "8000")),
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()
