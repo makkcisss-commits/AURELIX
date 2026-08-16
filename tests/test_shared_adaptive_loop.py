@@ -38,6 +38,27 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
     )
 
     assert factory.adaptive_loop.can_resume(execution_id) is True
+
+    parent = factory.runtime.store.enqueue(
+        "autonomy.run",
+        {"objective": mission.objective, "mission_id": mission.mission_id},
+        execution_id=execution_id,
+    )
+    claimed = factory.runtime.store.claim(parent.job_id, worker_id="test-worker")
+    assert claimed is not None
+    factory.runtime.store.complete(
+        execution_id,
+        {
+            "execution_id": execution_id,
+            "mission_id": mission.mission_id,
+            "status": "capability_learning_required",
+        },
+        worker_id=claimed.worker_id,
+        lease_token=claimed.lease_token,
+    )
+
     resumed = factory.adaptive_loop.resume_ready(execution_id)
     assert resumed.blocked is False
+    child = factory.runtime.store.status()["queued"]
+    assert child >= 1
     factory.autonomy_fabric.close()
