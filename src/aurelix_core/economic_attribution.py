@@ -74,7 +74,7 @@ class EconomicAttributionLedger:
         )
 
     def _ensure_durable_schema(self) -> None:
-        """Create the DB uniqueness boundary and migrate the legacy JSON ledger."""
+        """Create the DB uniqueness boundary and safely migrate the legacy JSON ledger."""
         with self.store.lock, self.store.db:
             self.store.db.execute(
                 """
@@ -104,22 +104,53 @@ class EconomicAttributionLedger:
                 try:
                     if not value.get("verified") or not value.get("governor_decision_id"):
                         continue
+                    reference = value["external_reference"]
+                    candidate = (
+                        reference,
+                        value["opportunity_id"],
+                        value["source_id"],
+                        value["governor_decision_id"],
+                        value.get("resource_scope"),
+                        value["expected_daily_eur"],
+                        value["observed_daily_eur"],
+                        value["variance_daily_eur"],
+                    )
+                    existing_row = self.store.db.execute(
+                        "SELECT * FROM economic_attributions WHERE external_reference=?",
+                        (reference,),
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing = self._from_row(existing_row)
+                        expected = EconomicAttribution(
+                            opportunity_id=candidate[1],
+                            source_id=candidate[2],
+                            governor_decision_id=candidate[3],
+                            resource_scope=candidate[4],
+                            expected_daily_eur=Decimal(candidate[5]),
+                            observed_daily_eur=Decimal(candidate[6]),
+                            variance_daily_eur=Decimal(candidate[7]),
+                            verified=True,
+                            external_reference=reference,
+                        )
+                        if existing != expected:
+                            raise RuntimeError(
+                                "economic ledger migration conflict for external_reference="
+                                + str(reference)
+                            )
+                        continue
                     self.store.db.execute(
                         """
-                        INSERT OR IGNORE INTO economic_attributions(
+                        INSERT INTO economic_attributions(
                             external_reference, opportunity_id, source_id,
                             governor_decision_id, resource_scope,
                             expected_daily_eur, observed_daily_eur,
                             variance_daily_eur, verified
                         ) VALUES(?,?,?,?,?,?,?,?,1)
                         """,
-                        (
-                            value["external_reference"], value["opportunity_id"],
-                            value["source_id"], value["governor_decision_id"],
-                            value.get("resource_scope"), value["expected_daily_eur"],
-                            value["observed_daily_eur"], value["variance_daily_eur"],
-                        ),
+                        candidate,
                     )
+                except RuntimeError:
+                    raise
                 except (KeyError, TypeError, ValueError):
                     continue
 
