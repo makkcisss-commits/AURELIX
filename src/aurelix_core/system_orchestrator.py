@@ -1,6 +1,7 @@
 """Unified AURELIX orchestration across intelligence, learning and governance."""
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, is_dataclass
 from decimal import Decimal
 from typing import Any, Mapping
@@ -24,7 +25,6 @@ class SystemCycleResult:
 
 class SystemOrchestrator:
     """One coordinator for the complete safe autonomous lifecycle."""
-
     def __init__(self, factory) -> None:
         self.factory = factory
         self.intelligence = factory.continuous_intelligence
@@ -39,8 +39,7 @@ class SystemOrchestrator:
 
     def run_cycle(self, objective: str) -> SystemCycleResult:
         objective = objective.strip()
-        if not objective:
-            raise ValueError("objective is required")
+        if not objective: raise ValueError("objective is required")
         enterprise = self.factory.run_enterprise_cycle(objective, approved=False)
         enterprise_dict = self._as_mapping(enterprise)
         academy_payload = enterprise_dict["academy"]
@@ -65,18 +64,14 @@ class SystemOrchestrator:
 
     def _verify_governor_decision(self, decision_id: str) -> None:
         decision_id = str(decision_id or "").strip()
-        if not decision_id:
-            raise ValueError("governor_decision_id is required")
+        if not decision_id: raise ValueError("governor_decision_id is required")
         with self.factory.runtime.store.lock:
-            rows = self.factory.runtime.store.db.execute(
-                "SELECT event_type,payload FROM audit_events WHERE job_id=? AND event_type IN ('decision.evaluated','decision.owner_authorized') ORDER BY created_at DESC",
-                (decision_id,),
-            ).fetchall()
-        if not rows:
-            raise PermissionError("governor decision does not exist in the canonical audit store")
+            rows = self.factory.runtime.store.db.execute("SELECT event_type,payload FROM audit_events WHERE job_id=? AND event_type IN ('decision.evaluated','decision.owner_authorized') ORDER BY created_at DESC", (decision_id,)).fetchall()
+        if not rows: raise PermissionError("governor decision does not exist in the canonical audit store")
         for row in rows:
-            payload = __import__("json").loads(row["payload"])
-            if bool(payload.get("allowed")):
+            payload = json.loads(row["payload"])
+            metadata = payload.get("metadata") or {}
+            if bool(metadata.get("allowed")):
                 return
         raise PermissionError("governor decision is not an allowed decision")
 
@@ -95,8 +90,7 @@ class SystemOrchestrator:
         knowledge_id = knowledge_payload.get("knowledge_id")
         lessons = [str(item) for item in academy_payload.get("lessons", []) if str(item).strip()]
         evidence = list(academy_payload.get("evidence", []))
-        if not knowledge_id or not lessons:
-            return {"status": "awaiting_knowledge", "knowledge_id": knowledge_id, "objective": objective}
+        if not knowledge_id or not lessons: return {"status": "awaiting_knowledge", "knowledge_id": knowledge_id, "objective": objective}
         source_refs = []
         for item in evidence:
             source = item.get("source") if isinstance(item, dict) else getattr(item, "source", "")
@@ -106,8 +100,7 @@ class SystemOrchestrator:
         return {"status": "projected", "knowledge_id": item.knowledge_id, "objective_id": projection.objective_id, "evidence_ids": list(projection.evidence_ids), "domain": projection.domain, "confidence": item.confidence}
 
     def _govern_proposal(self, intelligence: dict[str, Any], objective: str) -> dict[str, Any]:
-        if intelligence.get("status") != "projected":
-            return {"route": "BLOCKED", "reason": "no validated academy knowledge"}
+        if intelligence.get("status") != "projected": return {"route": "BLOCKED", "reason": "no validated academy knowledge"}
         proposal = self.proposal_boundary.propose(knowledge_id=intelligence["knowledge_id"], title=f"Academy proposal: {objective[:100]}", rationale=f"Traceable proposal derived from {len(intelligence['evidence_ids'])} evidence records.", learning_refs=intelligence["evidence_ids"])
         self._proposals[proposal.proposal_id] = proposal
         decision = self.governor.route(source="academy", action="proposal.review", requires_capital=False, risk=2, production_change=False)
@@ -121,9 +114,7 @@ class SystemOrchestrator:
             observation = f"Observed {signal.observed_daily_eur} EUR/day versus expected {signal.expected_daily_eur} EUR/day; variance {signal.variance_daily_eur} EUR/day."
             learning = self.learning.record(experiment_id=f"economic:{signal.opportunity_id}:{signal.source_id}", outcome=outcome, observation=observation, evidence_refs=[signal.opportunity_id, signal.source_id, signal.governor_decision_id, *([signal.external_reference] if signal.external_reference else [])], confidence=1.0)
             learning_items.append({"learning_id": learning.learning_id, "experiment_id": learning.experiment_id, "outcome": learning.outcome.value, "evidence_refs": list(learning.evidence_refs)})
-        context = self.verified_learning.learning_context()
-        context["learning_item_count"] = len(learning_items)
-        context["rule"] = "only verified realized economics may become learning evidence; learning remains observational and cannot authorize execution"
+        context = self.verified_learning.learning_context(); context["learning_item_count"] = len(learning_items); context["rule"] = "only verified realized economics may become learning evidence; learning remains observational and cannot authorize execution"
         return {"new_signals": len(fresh), "learning_items": learning_items, "signals": [{"opportunity_id": signal.opportunity_id, "source_id": signal.source_id, "governor_decision_id": signal.governor_decision_id, "resource_scope": signal.resource_scope, "expected_daily_eur": str(signal.expected_daily_eur), "observed_daily_eur": str(signal.observed_daily_eur), "variance_daily_eur": str(signal.variance_daily_eur), "realization_ratio": str(signal.realization_ratio), "evidence_type": signal.evidence_type, "verified": signal.verified} for signal in fresh], "context": context}
 
     def _diagnostics(self) -> dict[str, Any]:
