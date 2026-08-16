@@ -1,8 +1,9 @@
 """Unified revenue-source portfolio and replacement control plane.
 
 This module plans and measures revenue channels. It never fabricates revenue,
-creates third-party accounts, or performs payments. External channels become
-active only when their real connector and required human authorization exist.
+creates third-party accounts, or performs payments. Realized measurements must
+carry an externally verifiable reference before they can influence economic
+feedback.
 """
 from __future__ import annotations
 
@@ -42,12 +43,7 @@ class RevenueSource:
 
     @property
     def viable(self) -> bool:
-        return (
-            self.status in {SourceStatus.READY, SourceStatus.ACTIVE}
-            and self.confidence >= 0.6
-            and self.risk <= 0.4
-            and (not self.human_approval_required or self.human_approved)
-        )
+        return self.status in {SourceStatus.READY, SourceStatus.ACTIVE} and self.confidence >= 0.6 and self.risk <= 0.4 and (not self.human_approval_required or self.human_approved)
 
 
 @dataclass(frozen=True)
@@ -60,7 +56,6 @@ class PortfolioTarget:
 
 class RevenuePortfolio:
     """Manages many independent revenue experiments behind one business objective."""
-
     def __init__(self, target: PortfolioTarget | None = None) -> None:
         self.target = target or PortfolioTarget()
         self._sources: dict[str, RevenueSource] = {}
@@ -99,30 +94,24 @@ class RevenuePortfolio:
         self._event("source.activated", source_id=source_id)
         return source
 
-    def record_realized_daily(self, source_id: str, amount_eur: Decimal) -> RevenueSource:
+    def record_realized_daily(self, source_id: str, amount_eur: Decimal, *, external_reference: str | None = None) -> RevenueSource:
         if amount_eur < 0:
             raise ValueError("realized revenue cannot be negative")
+        if external_reference is None or not external_reference.strip():
+            raise ValueError("realized revenue requires an externally verifiable reference")
         source = self.get(source_id)
         source.realized_daily_eur = amount_eur
         source.last_checked_at = datetime.now(timezone.utc)
         if source.status == SourceStatus.ACTIVE and amount_eur == 0:
             source.status = SourceStatus.DEGRADED
-        self._event("source.revenue_recorded", source_id=source_id, amount_eur=str(amount_eur))
+        self._event("source.revenue_recorded", source_id=source_id, amount_eur=str(amount_eur), external_reference=external_reference.strip())
         return source
 
     def health(self) -> dict:
         active = [s for s in self._sources.values() if s.status == SourceStatus.ACTIVE]
         viable = [s for s in self._sources.values() if s.viable]
         daily = sum((s.realized_daily_eur for s in self._sources.values()), Decimal("0"))
-        return {
-            "total_sources": len(self._sources),
-            "active_sources": len(active),
-            "viable_sources": len(viable),
-            "daily_realized_eur": daily,
-            "minimum_target_met": len(viable) >= self.target.minimum_sources,
-            "preferred_target_met": len(viable) >= self.target.preferred_sources,
-            "maximum_target": self.target.maximum_sources,
-        }
+        return {"total_sources": len(self._sources), "active_sources": len(active), "viable_sources": len(viable), "daily_realized_eur": daily, "minimum_target_met": len(viable) >= self.target.minimum_sources, "preferred_target_met": len(viable) >= self.target.preferred_sources, "maximum_target": self.target.maximum_sources}
 
     def needs_replacement(self) -> list[RevenueSource]:
         return [s for s in self._sources.values() if s.status in {SourceStatus.DEGRADED, SourceStatus.RETIRED}]
