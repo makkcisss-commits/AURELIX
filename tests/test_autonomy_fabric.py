@@ -52,6 +52,35 @@ def test_autonomy_fabric_runs_one_complete_chain_and_survives_restart(tmp_path: 
     reopened.close()
 
 
+def test_recovered_claimed_execution_uses_persisted_mission_identity(tmp_path: Path) -> None:
+    db = tmp_path / "recovery.db"
+    mission_id = "mission-stable-001"
+
+    def provider(_: str):
+        return [Evidence(source="trusted", claim="validated fact", confidence=0.9, verified=True)]
+
+    def measure(_experiment):
+        return [{"success": 0.0}]
+
+    store = RuntimeStore(db)
+    runner = ExperimentRunner(collector=measure)
+    fabric = AutonomyFabric(store=store, research=ResearchEngine(provider=provider), experiment_runner=runner)
+    job = store.enqueue(
+        "autonomy.run",
+        {"objective": "recover a durable mission", "required_capabilities": [], "mission_id": mission_id},
+        execution_id="execution-recovery-001",
+    )
+    claimed = store.claim(job.job_id, worker_id="recovery-worker")
+    assert claimed is not None
+
+    run = fabric.run_claimed(claimed)
+
+    assert run.mission_id == mission_id
+    assert store.get(claimed.job_id).status == "completed"
+    assert store.get_result(claimed.job_id)["mission_id"] == mission_id
+    fabric.close()
+
+
 def test_knowledge_repository_is_restart_safe_and_queryable(tmp_path: Path) -> None:
     db = tmp_path / "knowledge.db"
     store = RuntimeStore(db)
