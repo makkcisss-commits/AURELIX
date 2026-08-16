@@ -64,17 +64,26 @@ class EconomicOutcomeRequest(BaseModel):
     external_reference: str = Field(min_length=1, max_length=500)
 
 
+def _financial_execution_status() -> str:
+    """Return the truthful financial execution state.
+
+    A configuration flag is not evidence that a payment provider is connected.
+    Until a real provider implementation, authenticated transaction path, and
+    its integration tests exist, the only truthful state is blocked.
+    """
+    return "FINANCIAL_EXECUTION_NOT_CONNECTED"
+
+
 def _live_snapshot() -> dict:
     if _factory is None or _runtime is None:
         return {**SystemSnapshot(system="DEGRADED").public(), "error": "runtime_initialization_failed", "error_type": _factory_error}
     runtime_status = _runtime.store.status()
     experiments = _runtime.query_experiments()
     recent_knowledge = _factory.knowledge.search(KnowledgeQuery("", limit=10))
-    financial_execution = "CONNECTED" if os.getenv("AURELIX_FINANCIAL_PROVIDER") else "FINANCIAL_EXECUTION_NOT_CONNECTED"
     return {
         **SystemSnapshot().public(),
         "runtime": runtime_status,
-        "financial_execution": financial_execution,
+        "financial_execution": _financial_execution_status(),
         "providers": {"model_configured": _factory.model_provider is not None, "research_configured": _factory.research_provider is not None, "knowledge_backend": type(_factory.knowledge).__name__},
         "experiments": {"total": len(experiments), "active": len([x for x in experiments if x["status"] in {"proposed", "running", "measuring", "evaluation"}]), "completed": len([x for x in experiments if x["status"] == "complete"])},
         "knowledge": {"total_items": _factory.knowledge.count(), "recent": [{"id": item.id, "title": item.title, "tags": item.tags, "created_at": item.created_at} for item in recent_knowledge]},
@@ -163,7 +172,7 @@ def ready():
     response = _api.get_readiness(service_ready)
     if response.status != 200:
         raise HTTPException(status_code=response.status, detail=response.body["status"])
-    return {**response.body, "financial_execution": "CONNECTED" if os.getenv("AURELIX_FINANCIAL_PROVIDER") else "FINANCIAL_EXECUTION_NOT_CONNECTED"}
+    return {**response.body, "financial_execution": _financial_execution_status()}
 
 
 @app.get("/v1/control/snapshot")
