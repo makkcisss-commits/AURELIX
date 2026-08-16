@@ -114,6 +114,7 @@ def test_verified_economic_signal_is_recorded_as_learning(monkeypatch, tmp_path)
             expected_daily_eur=Decimal("20"),
             observed_daily_eur=Decimal("15"),
             governor_decision_id="decision-learning",
+            external_reference="external-learning-1",
         )
         result = factory.run_system_cycle("consume economic result")
 
