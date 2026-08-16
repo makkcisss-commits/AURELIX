@@ -32,3 +32,24 @@ def test_recovery_does_not_loop_after_max_attempts(tmp_path):
     assert reopened.status()["failed"] == 1
     assert reopened.claim_next(max_attempts=2, worker_id="worker-2") is None
     reopened.close()
+
+
+def test_intermediate_checkpoint_never_proves_terminal_completion(tmp_path):
+    db = tmp_path / "runtime.db"
+    store = RuntimeStore(db)
+    job = store.enqueue("durable.pipeline", {"stage": "research"})
+    claimed = store.claim(job.job_id, worker_id="worker-1")
+    assert claimed is not None
+
+    store.record_result(job.job_id, {"stage": "research", "status": "completed"}, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
+    assert store.get_checkpoint(job.job_id) == {"stage": "research", "status": "completed"}
+    assert store.get_result(job.job_id) is None
+    store.close()
+
+    reopened = RuntimeStore(db)
+    assert reopened.recover_running_jobs(stale_after_seconds=0) == 1
+    assert reopened.status()["queued"] == 1
+    assert reopened.status()["succeeded"] == 0
+    assert reopened.get_result(job.job_id) is None
+    assert reopened.get_checkpoint(job.job_id) == {"stage": "research", "status": "completed"}
+    reopened.close()
