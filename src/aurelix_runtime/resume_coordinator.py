@@ -31,8 +31,18 @@ class DurableResumeCoordinator:
                 ).fetchone()
                 if parent is None:
                     raise KeyError(f"execution not found: {execution_id}")
-                if parent["status"] not in {"completed", "queued"}:
+                if parent["status"] != "completed":
                     raise RuntimeError(f"execution {execution_id} cannot resume from state {parent['status']}")
+                parent_result_row = self.store.db.execute(
+                    "SELECT result FROM job_results WHERE job_id=?", (execution_id,)
+                ).fetchone()
+                if parent_result_row is None:
+                    raise RuntimeError(f"execution {execution_id} has no durable result")
+                parent_result = json.loads(parent_result_row[0])
+                if parent_result.get("mission_id") != mission_id:
+                    raise RuntimeError("mission identity does not match the durable parent execution")
+                if parent_result.get("status") not in {"capability_learning_required", "capability_escalation_unavailable", "blocked", "awaiting_provider", "awaiting_validation"}:
+                    raise RuntimeError("only a blocked mission execution can be resumed")
 
                 existing_row = self.store.db.execute(
                     "SELECT value FROM runtime_state WHERE key=?", (key,)
@@ -44,7 +54,7 @@ class DurableResumeCoordinator:
                         existing_job = self.store.db.execute(
                             "SELECT status FROM jobs WHERE job_id=?", (existing_id,)
                         ).fetchone()
-                        if existing_job is not None:
+                        if existing_job is not None and existing_job["status"] in {"queued", "running", "completed"}:
                             self.store.db.commit()
                             return existing_id
 
