@@ -11,6 +11,7 @@ from aurelix_core.governor import Governor, GovernorRoute
 from .message_fabric import AgentMessage, MessageFabric
 from .mission_contracts import DEFAULT_ECONOMIC_TASKS, EconomicMission
 from .runtime import AurelixRuntime, RuntimeConfig
+from .schedule_registry import ScheduleRegistry
 from .scheduler import Schedule, Scheduler, SchedulerConfig
 
 
@@ -33,6 +34,7 @@ class AurelixSystem:
         if self.config.economic_cycle_seconds < 1:
             raise ValueError("economic_cycle_seconds must be >= 1")
         self.factory = factory
+        self._standalone_cycle_fallback = False
         if factory is not None:
             self.runtime = factory.runtime
             self._owns_runtime = False
@@ -52,18 +54,34 @@ class AurelixSystem:
         self.fabric.subscribe("mission.created", self._record_mission_message)
         if self.config.enable_autonomy and "autonomy.run" not in self.runtime.claimed_handlers:
             self.runtime.register_autonomy()
+
+        if self.cycle_handler is None and self.config.enable_autonomy:
+            self._standalone_cycle_fallback = True
+            self.cycle_handler = lambda objective: self.runtime.submit("autonomy.run", {"objective": objective})
+
         if self.cycle_handler is not None:
             self.runtime.register("system.cycle", lambda payload: self.cycle_handler(str(payload.get("objective", ""))))
 
         self.scheduler = Scheduler(submit=self.submit, config=self.config.scheduler)
+        self.schedule_registry = ScheduleRegistry(self.store)
+        if self.factory is not None:
+            # Give the integrity controller a read-only reference to the
+            # canonical scheduler facade; the EngineFactory remains the owner.
+            self.factory.system = self
         self._stop = threading.Event()
         self._started = False
         self._next_run: dict[str, float] = {}
         self._schedule_lock = threading.RLock()
 
+        for persisted in self.schedule_registry.load():
+            self.scheduler.add(persisted)
+            self._next_run.setdefault(persisted.name, time.monotonic())
+
         if self.config.enable_autonomy:
             if self.factory is not None and self.cycle_handler is not None:
                 self.schedule_system_cycle("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
+            elif self._standalone_cycle_fallback:
+                self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
             elif self.cycle_handler is None:
                 self.schedule_autonomy("economic-discovery", self.config.economic_cycle_seconds, self.config.economic_objective)
 
@@ -105,31 +123,16 @@ class AurelixSystem:
         schedule = Schedule(name, interval_seconds, job_kind, {"objective": objective})
         with self._schedule_lock:
             self.scheduler.add(schedule)
+            self.schedule_registry.save(schedule)
             self._next_run.setdefault(name, time.monotonic())
 
     def submit(self, kind: str, payload: dict[str, str] | None = None, *, risk: int = 0,
                requires_capital: bool = False, production_change: bool = False) -> str:
-        """Submit work only after the canonical Governor routing decision."""
-        route = self.governor.route(
-            source="system",
-            action=kind,
-            requires_capital=requires_capital,
-            risk=risk,
-            production_change=production_change,
-        )
-        decision = AgentMessage(
-            topic="governor.decision", sender="governor",
-            payload={"action": kind, "outcome": route.route.value, "request_id": route.request_id},
-            policy_context={"risk": risk, "requires_capital": requires_capital, "production_change": production_change},
-        )
+        route = self.governor.route(source="system", action=kind, requires_capital=requires_capital, risk=risk, production_change=production_change)
+        decision = AgentMessage(topic="governor.decision", sender="governor", payload={"action": kind, "outcome": route.route.value, "request_id": route.request_id}, policy_context={"risk": risk, "requires_capital": requires_capital, "production_change": production_change})
         self.fabric.publish(decision)
         if route.route is not GovernorRoute.POLICY_ALLOWED:
-            self.store.record_audit(
-                None,
-                "system.submission_blocked",
-                {"actor": "governor", "subject": kind, "outcome": route.route.value,
-                 "request_id": route.request_id, "reasons": list(route.reasons)},
-            )
+            self.store.record_audit(None, "system.submission_blocked", {"actor": "governor", "subject": kind, "outcome": route.route.value, "request_id": route.request_id, "reasons": list(route.reasons)})
             raise PermissionError(route.reasons)
         return self.runtime.submit(kind, payload or {})
 
@@ -142,11 +145,7 @@ class AurelixSystem:
                     continue
                 self.submit(schedule.job_kind, schedule.payload)
                 self._next_run[schedule.name] = now + schedule.interval_seconds
-                self.store.record_audit(
-                    None,
-                    "schedule.enqueued",
-                    {"actor": "scheduler", "subject": schedule.name, "outcome": "queued", "job_kind": schedule.job_kind},
-                )
+                self.store.record_audit(None, "schedule.enqueued", {"actor": "scheduler", "subject": schedule.name, "outcome": "queued", "job_kind": schedule.job_kind})
                 count += 1
         return count
 
@@ -162,11 +161,7 @@ class AurelixSystem:
         self.scheduler.recover()
         self._stop.clear()
         self._started = True
-        self.fabric.publish(AgentMessage(
-            topic="mission.created", sender="governor",
-            recipient="orchestrator", payload={"mission_id": self.mission.mission_id, "objective": self.mission.objective},
-            provenance={"tasks": [task.name for task in self.mission.tasks]},
-        ))
+        self.fabric.publish(AgentMessage(topic="mission.created", sender="governor", recipient="orchestrator", payload={"mission_id": self.mission.mission_id, "objective": self.mission.objective}, provenance={"tasks": [task.name for task in self.mission.tasks]}))
         self.store.audit("system.started", "system", "system", "running", {"mission_id": self.mission.mission_id})
 
     def stop(self) -> None:
@@ -193,6 +188,7 @@ class AurelixSystem:
             "worker_id": self.runtime.worker_id,
             "store": "shared",
             "scheduler": "shared-runtime",
+            "schedule_persistence": "durable-runtime-state",
             "governor": "canonical-submission-boundary",
             "fabric": "shared-composition-fabric" if self.factory is not None else "structured-topic-router",
             "composition": "engine-factory" if self.factory is not None else "standalone",

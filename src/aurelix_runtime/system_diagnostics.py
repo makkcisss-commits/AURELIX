@@ -29,6 +29,7 @@ class SystemDiagnostics:
         checks: list[DiagnosticCheck] = [
             self._check("runtime", self._runtime),
             self._check("canonical_composition", self._canonical_composition),
+            self._check("system_integrity", self._system_integrity),
             self._check("experiment_execution", self._experiment_execution),
             self._check("economic_feedback", self._economic_feedback),
             self._check("live_opportunity_readiness", self._live_opportunity_readiness),
@@ -81,6 +82,15 @@ class SystemDiagnostics:
         if not all(shared_engines.values()):
             return DiagnosticCheck("canonical_composition", "failed", "high", "multiple composition instances detected", shared_engines)
         return DiagnosticCheck("canonical_composition", "ok", "info", "runtime autonomy and enterprise loop share one composition", shared_engines)
+
+    def _system_integrity(self) -> DiagnosticCheck:
+        controller = getattr(self.factory, "integrity", None)
+        if controller is None:
+            return DiagnosticCheck("system_integrity", "failed", "critical", "system integrity control plane is not composed", {})
+        report = controller.run()
+        status = "failed" if report["status"] == "failed" else "degraded" if report["status"] == "warning" else "ok"
+        severity = "critical" if status == "failed" else "medium" if status == "degraded" else "info"
+        return DiagnosticCheck("system_integrity", status, severity, "canonical ownership and durable-state integrity was inspected", report)
 
     def _experiment_execution(self) -> DiagnosticCheck:
         executor = getattr(self.factory, "experiment_executor", None)

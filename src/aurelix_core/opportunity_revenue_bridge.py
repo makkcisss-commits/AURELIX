@@ -44,7 +44,7 @@ class RevenueSource:
 class OpportunityRevenueBridge:
     """Turns evidence-qualified opportunities into accountable revenue sources."""
 
-    def __init__(self, revenue: RevenueEngine | None = None) -> None:
+    def __init__(self, revenue: object | None = None) -> None:
         self.revenue = revenue or RevenueEngine()
         self.sources: dict[str, RevenueSource] = {}
 
@@ -75,11 +75,27 @@ class OpportunityRevenueBridge:
         self.sources[source.source_id] = source
         return source
 
-    def record_observation(self, source_id: str, amount_eur: Decimal, *, external_reference: str | None = None) -> RevenueSource:
+    def record_observation(
+        self,
+        source_id: str,
+        amount_eur: Decimal,
+        *,
+        external_reference: str | None = None,
+        synthetic: bool = False,
+    ) -> RevenueSource:
         source = self.sources[source_id]
         if amount_eur <= 0:
             raise ValueError("observed revenue must be positive")
-        self.revenue.record(activity_id=source_id, amount_eur=amount_eur, source=source.channel, external_reference=external_reference)
+        if synthetic:
+            return source
+        if not external_reference or not external_reference.strip():
+            raise ValueError("productive revenue requires an externally verifiable reference")
+        self.revenue.record(
+            activity_id=source_id,
+            amount_eur=amount_eur,
+            source=source.channel,
+            external_reference=external_reference,
+        )
         observed = self.revenue.total_for_activity(source_id)
         updated = RevenueSource(**{**source.__dict__, "stage": SourceStage.ACTIVE, "observed_daily_eur": observed})
         self.sources[source_id] = updated

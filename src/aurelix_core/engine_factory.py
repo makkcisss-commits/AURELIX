@@ -17,8 +17,11 @@ from .governor import Governor
 from .audit import AuditLog
 from .model_gateway import GenerationRequest, GovernedModelGateway, ModelProvider, OpenAICompatibleProvider
 from .models import ActionClass, Actor, AutonomyLevel, DecisionRequest
+from .opportunity_revenue_bridge import OpportunityRevenueBridge
 from .policy import PolicyEngine
-from .revenue_portfolio import RevenuePortfolio
+from .revenue import RevenueEngine
+from .durable_revenue import DurableRevenueLedger
+from .durable_revenue_portfolio import DurableRevenuePortfolio
 from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
@@ -33,6 +36,7 @@ from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 from aurelix_runtime.self_improvement import SelfImprovementController
 from aurelix_runtime.system_diagnostics import SystemDiagnostics
 from aurelix_runtime.system_developer import SystemDeveloper
+from aurelix_runtime.system_integrity import SystemIntegrityController
 from aurelix_runtime.system_validation import SystemValidation
 
 ExperimentExecutor = Callable[[Experiment], list[dict[str, Any]]]
@@ -74,7 +78,10 @@ class EngineFactory:
         self.evaluation = EvaluationEngine()
         self.opportunity = OpportunityEngine()
         self.business = BusinessEngine(require_approval=True)
-        self.revenue_portfolio = RevenuePortfolio()
+        self.revenue = RevenueEngine()
+        self.durable_revenue = DurableRevenueLedger(self.runtime.store, self.revenue)
+        self.opportunity_revenue_bridge = OpportunityRevenueBridge(self.durable_revenue)
+        self.revenue_portfolio = DurableRevenuePortfolio(self.runtime.store)
         self.economic_feedback = EconomicFeedback(self.revenue_portfolio)
         self.enterprise = EnterpriseLoop(runtime_store=self.runtime.store, knowledge_repository=self.knowledge, research=self.research, academy=self.academy, knowledge_engine=self.knowledge_engine, innovation=self.innovation, experiment=self.experiment, evaluation=self.evaluation, opportunity=self.opportunity, business=self.business)
         self.message_fabric = MessageFabric()
@@ -94,6 +101,7 @@ class EngineFactory:
         self.diagnostics = SystemDiagnostics(self)
         self.system_developer = SystemDeveloper(self.diagnostics, repository=repository)
         self.system_validation = SystemValidation(self)
+        self.integrity = SystemIntegrityController(self)
         self.self_improvement = SelfImprovementController(self.diagnostics, self.system_developer)
         self.system_orchestrator = SystemOrchestrator(self)
 
@@ -126,6 +134,7 @@ class EngineFactory:
     def system_status(self): return self.system_orchestrator.status()
     def diagnose(self): return self.diagnostics.run()
     def validate_system(self): return self.system_validation.run()
+    def check_integrity(self): return self.integrity.run()
     def learn_verified(self, objective: str, evidence): return self.knowledge_learning.learn(objective, evidence)
     def plan_system_change(self, objective: str, scope: list[str] | None = None): return self.system_developer.plan(objective, scope)
     def self_improvement_assess(self): return self.self_improvement.assess()
