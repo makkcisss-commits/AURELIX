@@ -28,7 +28,12 @@ def test_non_healthy_component_marks_system_attention() -> None:
 def test_control_center_snapshot_is_read_only() -> None:
     treasury = Treasury(Decimal("100"))
     revenue = RevenueEngine()
-    revenue.record(activity_id="activity-1", amount_eur=Decimal("250"), source="invoice")
+    revenue.record(
+        activity_id="activity-1",
+        amount_eur=Decimal("250"),
+        source="invoice",
+        external_reference="invoice:activity-1",
+    )
     center = ControlCenter(treasury=treasury, revenue=revenue, governor=Governor())
     snapshot = center.snapshot([
         ComponentStatus("Treasury", HealthState.HEALTHY, "operational"),
