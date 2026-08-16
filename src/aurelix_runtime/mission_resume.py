@@ -122,7 +122,7 @@ class MissionResumeCoordinator:
                 raise
 
     def release_resume(self, *, mission_id: str, execution_id: str, parent_execution_id: str | None) -> MissionState:
-        """Cancel an unclaimed resume without leaving the old execution marked active."""
+        """Fail an unclaimed resume without deleting its durable execution evidence."""
         now = self._now()
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
@@ -131,7 +131,10 @@ class MissionResumeCoordinator:
                 if row is None:
                     raise KeyError(mission_id)
                 if row["status"] == "resume_reserved" and row["active_execution_id"] == execution_id:
-                    self.store.db.execute("DELETE FROM jobs WHERE job_id=? AND status='queued'", (execution_id,))
+                    self.store.db.execute(
+                        "UPDATE jobs SET status='failed', updated_at=? WHERE job_id=? AND status='queued'",
+                        (now, execution_id),
+                    )
                     self.store.db.execute(
                         "UPDATE mission_state SET status='blocked', active_execution_id=NULL, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
                         (now, mission_id, execution_id),
