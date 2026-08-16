@@ -3,8 +3,10 @@ from aurelix_core.models import ActionClass, Actor, AutonomyLevel, DecisionReque
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
 
-def test_engine_factory_uses_durable_audit_sink(tmp_path):
-    runtime = AurelixRuntime(RuntimeConfig(db_path=str(tmp_path / "runtime.db")))
+def test_engine_factory_uses_durable_audit_sink(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    monkeypatch.setenv("AURELIX_AUDIT_DB", str(db_path))
+    runtime = AurelixRuntime(RuntimeConfig(db_path=str(db_path)))
     factory = EngineFactory(config=EngineFactoryConfig(register_autonomy=False), runtime=runtime)
     request = DecisionRequest(
         actor=Actor(id="research-agent", role="research", autonomy=AutonomyLevel.A1),
