@@ -25,7 +25,8 @@ def test_resume_state_keeps_mission_identity_distinct_from_execution_identity() 
 def test_resume_handoff_failure_does_not_unblock_mission() -> None:
     intelligence = ContinuousIntelligence()
     loop = AdaptiveLoop(intelligence, CapabilityEscalator(intelligence))
-    mission = loop.register_mission("execution-1", "resume governed workflow", [], mission_id="mission-1")
+    mission = loop.register_mission("execution-1", "resume governed workflow", ["crm-write"], mission_id="mission-1")
+    loop.block_for_capability(mission.execution_id, "crm-write", reason="capability missing", requested_by="test")
     loop.set_resume_executor(lambda _mission: (_ for _ in ()).throw(RuntimeError("runtime unavailable")))
     try:
         loop.resume_ready(mission.execution_id)
@@ -33,4 +34,4 @@ def test_resume_handoff_failure_does_not_unblock_mission() -> None:
         pass
     else:
         raise AssertionError("runtime handoff failure must block the resume transition")
-    assert loop.missions[mission.execution_id].blocked is False
+    assert loop.missions[mission.execution_id].blocked is True
