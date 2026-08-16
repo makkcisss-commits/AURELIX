@@ -35,3 +35,45 @@ def test_stale_worker_cannot_persist_durable_result_after_recovery(tmp_path):
     )
     assert store.get_result(job.job_id) == {"worker": "fresh"}
     store.close()
+
+
+def test_stale_worker_cannot_silently_finish_after_recovery(tmp_path):
+    store = RuntimeStore(tmp_path / "runtime.db", lease_seconds=30)
+    job = store.enqueue("demo", {})
+    stale = store.claim(job.job_id, worker_id="worker-a")
+    assert stale is not None
+
+    with store.lock, store.db:
+        store.db.execute(
+            "UPDATE jobs SET lease_until=?, heartbeat_at=? WHERE job_id=?",
+            ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00", job.job_id),
+        )
+
+    assert store.recover_running_jobs() == 1
+    fresh = store.claim(job.job_id, worker_id="worker-b")
+    assert fresh is not None
+
+    with pytest.raises(LeaseLostError):
+        store.finish(
+            job.job_id,
+            False,
+            "stale worker",
+            retry=False,
+            worker_id=stale.worker_id,
+            lease_token=stale.lease_token,
+        )
+
+    current = store.get(job.job_id)
+    assert current is not None
+    assert current.status == "running"
+    assert current.worker_id == fresh.worker_id
+    store.finish(
+        job.job_id,
+        False,
+        "fresh worker failure",
+        retry=False,
+        worker_id=fresh.worker_id,
+        lease_token=fresh.lease_token,
+    )
+    assert store.get(job.job_id).status == "failed"
+    store.close()
