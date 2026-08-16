@@ -13,7 +13,7 @@ def test_health_and_web_surface_are_reachable():
     page = client.get("/")
     assert page.status_code == 200
     assert "AURELIX" in page.text
-    assert "owner-secret" in page.text
+    assert "owner-secret" not in page.text
 
 
 def test_protected_snapshot_requires_owner_secret():
