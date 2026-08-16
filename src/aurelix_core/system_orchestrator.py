@@ -29,14 +29,11 @@ class SystemOrchestrator:
 
     def __init__(self, factory) -> None:
         self.factory = factory
-        # These are composition-owned dependencies. Creating a second
-        # ContinuousIntelligence or Academy here would split state and make
-        # the enterprise appear integrated while actually learning in silos.
         self.intelligence = factory.continuous_intelligence
-        self.curated_academy = factory.curated_academy
+        self.academy = factory.academy
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
-        self.economic_ledger = EconomicAttributionLedger()
+        self.economic_ledger = EconomicAttributionLedger(store=factory.runtime.store)
         self.verified_learning = VerifiedEconomicLearning(self.economic_ledger)
         self.learning = LearningEngine()
         self.governor = factory.governor if hasattr(factory, "governor") else Governor()
@@ -85,7 +82,7 @@ class SystemOrchestrator:
 
     def status(self) -> dict[str, Any]:
         runtime = self.factory.runtime
-        return {"runtime": runtime.store.status(), "economic_learning": self.verified_learning.learning_context(), "learning_items": len(self.learning._items), "proposal_count": len(self._proposals), "intelligence": {"domains": len(self.intelligence.domains), "objectives": len(self.intelligence.objectives), "evidence": len(self.intelligence.evidence), "knowledge": len(self.intelligence.knowledge)}}
+        return {"runtime": runtime.store.status(), "economic_learning": self.verified_learning.learning_context(), "learning_items": len(self.learning._items), "proposal_count": len(self._proposals), "intelligence": {"domains": len(self.intelligence.domains), "objectives": len(self.intelligence.objectives), "evidence": len(self.intelligence.evidence), "knowledge": len(self.intelligence.knowledge)}, "academy_knowledge": len(self.academy.all())}
 
     def _project_academy(self, academy_payload: dict[str, Any], knowledge_payload: dict[str, Any], objective: str) -> dict[str, Any]:
         knowledge_id = knowledge_payload.get("knowledge_id")
@@ -98,9 +95,15 @@ class SystemOrchestrator:
             source = item.get("source") if isinstance(item, dict) else getattr(item, "source", "")
             if source:
                 source_refs.append(str(source))
-        curated = self.curated_academy.create_knowledge(title=f"AURELIX Academy: {objective[:120]}", summary="\n".join(lessons), learning_refs=[str(knowledge_id)], source_refs=source_refs or [str(knowledge_id)], confidence=1.0 if knowledge_payload.get("validated") else 0.5)
-        item, projection = self.academy_bridge.project_knowledge(curated, domain="general")
-        return {"status": "projected", "knowledge_id": item.knowledge_id, "objective_id": projection.objective_id, "evidence_ids": list(projection.evidence_ids), "domain": projection.domain, "confidence": item.confidence}
+        canonical = self.academy.create_knowledge(
+            title=f"AURELIX Academy: {objective[:120]}",
+            summary="\n".join(lessons),
+            learning_refs=[str(knowledge_id)],
+            source_refs=source_refs or [str(knowledge_id)],
+            confidence=1.0 if knowledge_payload.get("validated") else 0.5,
+        )
+        item, projection = self.academy_bridge.project_knowledge(canonical, domain="general")
+        return {"status": "projected", "knowledge_id": item.knowledge_id, "objective_id": projection.objective_id, "evidence_ids": list(projection.evidence_ids), "domain": projection.domain, "confidence": canonical.confidence}
 
     def _govern_proposal(self, intelligence: dict[str, Any], objective: str) -> dict[str, Any]:
         if intelligence.get("status") != "projected":
