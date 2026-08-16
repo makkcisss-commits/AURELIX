@@ -13,6 +13,7 @@ from .experiment_runner import ExperimentRunner
 from .integrated_engines import Experiment
 from .pipeline_runner import GovernedPipeline
 from aurelix_core.evaluation import EvaluationEngine
+from aurelix_core.governor import Governor, GovernorRoute
 
 
 @dataclass(frozen=True)
@@ -178,10 +179,11 @@ class RuntimeStore:
 class AurelixRuntime:
     """24/7 orchestration loop with durable state, worker leases and governed pipelines."""
 
-    def __init__(self, config: RuntimeConfig | None = None) -> None:
+    def __init__(self, config: RuntimeConfig | None = None, governor: Governor | None = None) -> None:
         self.config = config or RuntimeConfig()
         self.worker_id = str(uuid4())
         self.store = RuntimeStore(self.config.database_path)
+        self.governor = governor or Governor()
         self.handlers: dict[str, Callable[[dict[str, str]], None]] = {}
         self._stop = threading.Event()
         self.store.recover_running()
@@ -240,11 +242,35 @@ class AurelixRuntime:
             self.store.audit("experiment.evaluated", "experiment-runner", experiment.id, "succeeded" if experiment.result and experiment.result.get("passed") else "evaluated", experiment.result or {})
         return ExperimentRunner(collector=collector, evaluator=EvaluationEngine(), on_complete=on_complete)
 
-    def submit(self, kind: str, payload: dict[str, str] | None = None) -> str:
+    def submit(
+        self,
+        kind: str,
+        payload: dict[str, str] | None = None,
+        *,
+        risk: int = 0,
+        requires_capital: bool = False,
+        production_change: bool = False,
+    ) -> str:
         if kind not in self.handlers:
             raise ValueError(f"unregistered job kind: {kind}")
+        route = self.governor.route(
+            source="runtime",
+            action=kind,
+            requires_capital=requires_capital,
+            risk=risk,
+            production_change=production_change,
+        )
+        if route.route is not GovernorRoute.POLICY_ALLOWED:
+            self.store.audit(
+                "job.denied",
+                "runtime",
+                kind,
+                "denied",
+                {"risk": risk, "requires_capital": requires_capital, "production_change": production_change, "reasons": route.reasons},
+            )
+            raise PermissionError(route.reasons)
         job_id = self.store.enqueue(kind, payload or {})
-        self.store.audit("job.queued", "runtime", job_id, "queued", {"kind": kind})
+        self.store.audit("job.queued", "runtime", job_id, "queued", {"kind": kind, "risk": risk})
         return job_id
 
     def run_once(self) -> bool:
