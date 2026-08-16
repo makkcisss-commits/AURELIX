@@ -12,7 +12,7 @@ class EngineResult:
 
 
 class EngineRegistry:
-    """Explicit allowlist of engine capabilities. No dynamic execution by name."""
+    """Explicit allowlist of engine capabilities and their handlers."""
 
     def __init__(self) -> None:
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
@@ -23,13 +23,18 @@ class EngineRegistry:
         self._handlers[name] = handler
 
     def execute(self, name: str, payload: dict[str, Any]) -> EngineResult:
-        handler = self._handlers.get(name)
-        if handler is None:
-            raise PermissionError(f"engine is not registered: {name}")
+        """Low-level registry execution; orchestration should use ExecutionPlane."""
+        handler = self.handler(name)
         output = handler(payload)
         if not isinstance(output, dict):
             raise TypeError("engine handlers must return a dictionary")
         return EngineResult(engine=name, status="completed", output=output)
+
+    def handler(self, name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        handler = self._handlers.get(name)
+        if handler is None:
+            raise PermissionError(f"engine is not registered: {name}")
+        return handler
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._handlers))
