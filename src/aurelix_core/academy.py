@@ -71,20 +71,20 @@ class AcademyEngine:
                 self.store.db.rollback()
                 raise
 
-    def _effective_store(self, store):
-        """Return the single configured persistence authority for this Academy."""
-        if self.store is not None and store is not self.store:
-            raise RuntimeError("Academy store mismatch: a second persistence authority is forbidden")
-        if self.store is None:
-            self.store = store
-        return self.store
+    def _event_store(self, store):
+        """Return the event sink without replacing Academy's durable knowledge authority."""
+        if store is not None:
+            return store
+        if self.store is not None:
+            return self.store
+        raise RuntimeError("Academy requires a persistence/event store")
 
-    def run(self, research: dict, store) -> dict:
-        """Execute the Academy stage without introducing a second persistence authority."""
-        store = self._effective_store(store)
+    def run(self, research: dict, store=None) -> dict:
+        """Execute Academy using its configured durable store and the supplied event sink."""
+        event_store = self._event_store(store)
         evidence = list(research.get("evidence", []))
         if research.get("status") == "awaiting_provider":
-            store.record("academy.blocked", reason="research_provider_unavailable")
+            event_store.record("academy.blocked", reason="research_provider_unavailable")
             return {
                 "lessons": [],
                 "evidence": [],
@@ -115,7 +115,7 @@ class AcademyEngine:
             ))
             if generated.strip():
                 lessons = [generated.strip()]
-        store.record("academy.learned", lesson_count=len(lessons), evidence_count=len(evidence))
+        event_store.record("academy.learned", lesson_count=len(lessons), evidence_count=len(evidence))
         return {
             "lessons": lessons,
             "evidence": evidence,
@@ -138,6 +138,8 @@ class AcademyEngine:
             raise ValueError("knowledge must reference at least one learning")
         if not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if self.store is None:
+            raise RuntimeError("Academy durable knowledge store is not configured")
         item = Knowledge(
             str(uuid4()), title, summary, tuple(learning_refs), tuple(source_refs), confidence
         )
