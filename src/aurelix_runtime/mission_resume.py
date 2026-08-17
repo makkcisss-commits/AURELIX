@@ -23,6 +23,16 @@ class MissionState:
 class MissionResumeCoordinator:
     """Durable mission identity and atomic resume reservation boundary."""
 
+    _NON_FAILURE_BLOCK_REASONS = frozenset({
+        "capability_learning_required",
+        "capability_escalation_unavailable",
+        "awaiting_measurement",
+        "awaiting_execution",
+        "awaiting_validation",
+        "awaiting_approval",
+        "awaiting_provider",
+    })
+
     def __init__(self, store) -> None:
         self.store = store
         with self.store.lock, self.store.db:
@@ -82,12 +92,21 @@ class MissionResumeCoordinator:
                 raise
 
     def block(self, *, mission_id: str, execution_id: str, reason: str) -> MissionState:
+        """Block while keeping failed executions out of the active slot."""
+        normalized_reason = reason.strip()
         now = self._now()
+        is_failure = normalized_reason not in self._NON_FAILURE_BLOCK_REASONS
         with self.store.lock, self.store.db:
-            cursor = self.store.db.execute(
-                "UPDATE mission_state SET status='blocked', active_execution_id=?, failed_execution_id=NULL, resume_state=?, updated_at=? WHERE mission_id=?",
-                (execution_id, reason, now, mission_id),
-            )
+            if is_failure:
+                cursor = self.store.db.execute(
+                    "UPDATE mission_state SET status='blocked', active_execution_id=NULL, failed_execution_id=?, resume_state=?, updated_at=? WHERE mission_id=?",
+                    (execution_id, normalized_reason, normalized_reason, now, mission_id),
+                )
+            else:
+                cursor = self.store.db.execute(
+                    "UPDATE mission_state SET status='blocked', active_execution_id=?, failed_execution_id=NULL, resume_state=?, updated_at=? WHERE mission_id=?",
+                    (execution_id, normalized_reason, now, mission_id),
+                )
             if cursor.rowcount != 1:
                 raise KeyError(mission_id)
             row = self.store.db.execute("SELECT * FROM mission_state WHERE mission_id=?", (mission_id,)).fetchone()
@@ -157,13 +176,7 @@ class MissionResumeCoordinator:
                 raise
 
     def activate(self, *, mission_id: str, execution_id: str) -> MissionState:
-        """Mark a successful execution authoritative without weakening resume fencing.
-
-        A newly registered mission has no active execution yet, so its first
-        successful execution is allowed to establish the active execution. A
-        resumed mission, however, must already fence the exact reserved
-        execution id before activation.
-        """
+        """Mark a successful execution authoritative without weakening resume fencing."""
         now = self._now()
         with self.store.lock, self.store.db:
             cursor = self.store.db.execute(
