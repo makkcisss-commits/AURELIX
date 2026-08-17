@@ -1,6 +1,7 @@
 from concurrent.futures import ProcessPoolExecutor
 from decimal import Decimal
 from pathlib import Path
+import json
 
 import pytest
 
@@ -98,5 +99,22 @@ def test_same_external_reference_is_unique_across_processes(tmp_path: Path) -> N
         ledger = EconomicAttributionLedger(store)
         assert len(ledger.all()) == 1
         assert ledger.all()[0].observed_daily_eur == Decimal("12")
+    finally:
+        store.close()
+
+
+def test_corrupt_legacy_ledger_fails_closed(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "economic-attribution.db")
+    try:
+        payload = {"payment-bad": {"verified": True, "source_id": "src"}}
+        with store.lock, store.db:
+            store.db.execute(
+                "INSERT INTO runtime_state(key,value) VALUES(?,?)",
+                (EconomicAttributionLedger._STATE_KEY, json.dumps(payload)),
+            )
+            store.db.commit()
+
+        with pytest.raises(RuntimeError, match="malformed|governor_decision_id"):
+            EconomicAttributionLedger(store)
     finally:
         store.close()
