@@ -1,7 +1,8 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 import pytest
 
-from aurelix_core.revenue import RevenueEngine
+from aurelix_core.revenue import RevenueEngine, RevenueRecord
 
 
 def test_revenue_is_recorded_per_activity() -> None:
@@ -51,3 +52,17 @@ def test_verified_external_reference_cannot_be_rebound() -> None:
             source="payment-provider",
             external_reference="payment-456",
         )
+
+
+def test_revenue_record_keeps_legacy_positional_constructor_compatibility() -> None:
+    recorded_at = datetime.now(timezone.utc)
+    record = RevenueRecord(
+        "revenue-1",
+        "activity-1",
+        Decimal("10"),
+        "invoice",
+        None,
+        recorded_at,
+    )
+    assert record.verified_external is False
+    assert record.recorded_at == recorded_at
