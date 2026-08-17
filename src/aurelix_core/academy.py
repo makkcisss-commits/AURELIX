@@ -82,6 +82,13 @@ class AcademyEngine:
     def run(self, research: dict, store=None) -> dict:
         """Execute Academy using its configured durable store and the supplied event sink."""
         event_store = self._event_store(store)
+        # A direct AutonomyFabric composition may inject the RuntimeStore only
+        # through run(..., store). Promote that store to Academy's durable
+        # authority so knowledge created after the run cannot silently fall
+        # back to an in-memory-only registry.
+        if self.store is None:
+            self.store = event_store
+            self._load()
         evidence = list(research.get("evidence", []))
         if research.get("status") == "awaiting_provider":
             event_store.record("academy.blocked", reason="research_provider_unavailable")
