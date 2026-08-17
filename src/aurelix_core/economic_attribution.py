@@ -6,6 +6,7 @@ outcomes but never authorizes execution and never treats forecasts as revenue.
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import RLock
@@ -74,7 +75,7 @@ class EconomicAttributionLedger:
         )
 
     def _ensure_durable_schema(self) -> None:
-        """Create the DB uniqueness boundary and safely migrate the legacy JSON ledger."""
+        """Create the DB uniqueness boundary and fail closed on corrupt legacy state."""
         with self.store.lock, self.store.db:
             self.store.db.execute(
                 """
@@ -98,22 +99,48 @@ class EconomicAttributionLedger:
                 return
             try:
                 data = json.loads(row[0])
-            except (TypeError, json.JSONDecodeError):
-                return
-            for value in data.values():
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("economic ledger legacy state is invalid JSON") from exc
+            if not isinstance(data, dict):
+                raise RuntimeError("economic ledger legacy state must be a mapping")
+
+            for legacy_key, value in data.items():
+                if not isinstance(value, dict):
+                    raise RuntimeError(
+                        f"economic ledger legacy entry {legacy_key!r} is not an object"
+                    )
+                if not value.get("verified"):
+                    raise RuntimeError(
+                        f"economic ledger legacy entry {legacy_key!r} is unverified"
+                    )
+                if not value.get("governor_decision_id"):
+                    raise RuntimeError(
+                        f"economic ledger legacy entry {legacy_key!r} has no governor_decision_id"
+                    )
                 try:
-                    if not value.get("verified") or not value.get("governor_decision_id"):
-                        continue
-                    reference = value["external_reference"]
+                    reference = str(value["external_reference"]).strip()
+                    if not reference:
+                        raise ValueError("external_reference is empty")
                     candidate = (
                         reference,
-                        value["opportunity_id"],
-                        value["source_id"],
-                        value["governor_decision_id"],
+                        str(value["opportunity_id"]),
+                        str(value["source_id"]),
+                        str(value["governor_decision_id"]),
                         value.get("resource_scope"),
-                        value["expected_daily_eur"],
-                        value["observed_daily_eur"],
-                        value["variance_daily_eur"],
+                        str(value["expected_daily_eur"]),
+                        str(value["observed_daily_eur"]),
+                        str(value["variance_daily_eur"]),
+                    )
+                    expected = EconomicAttribution(
+                        opportunity_id=candidate[1],
+                        source_id=candidate[2],
+                        governor_decision_id=candidate[3],
+                        resource_scope=candidate[4],
+                        expected_daily_eur=Decimal(candidate[5]),
+                        observed_daily_eur=Decimal(candidate[6]),
+                        variance_daily_eur=Decimal(candidate[7]),
+                        verified=True,
+                        external_reference=reference,
                     )
                     existing_row = self.store.db.execute(
                         "SELECT * FROM economic_attributions WHERE external_reference=?",
@@ -121,21 +148,10 @@ class EconomicAttributionLedger:
                     ).fetchone()
                     if existing_row is not None:
                         existing = self._from_row(existing_row)
-                        expected = EconomicAttribution(
-                            opportunity_id=candidate[1],
-                            source_id=candidate[2],
-                            governor_decision_id=candidate[3],
-                            resource_scope=candidate[4],
-                            expected_daily_eur=Decimal(candidate[5]),
-                            observed_daily_eur=Decimal(candidate[6]),
-                            variance_daily_eur=Decimal(candidate[7]),
-                            verified=True,
-                            external_reference=reference,
-                        )
                         if existing != expected:
                             raise RuntimeError(
                                 "economic ledger migration conflict for external_reference="
-                                + str(reference)
+                                + reference
                             )
                         continue
                     self.store.db.execute(
@@ -149,10 +165,10 @@ class EconomicAttributionLedger:
                         """,
                         candidate,
                     )
-                except RuntimeError:
-                    raise
-                except (KeyError, TypeError, ValueError):
-                    continue
+                except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+                    raise RuntimeError(
+                        f"economic ledger legacy entry {legacy_key!r} is malformed"
+                    ) from exc
 
     def _load(self) -> None:
         if self.store is None:
@@ -226,10 +242,8 @@ class EconomicAttributionLedger:
                     self._payload(entry),
                 )
                 self.store.db.commit()
-            except Exception as exc:
+            except sqlite3.IntegrityError:
                 self.store.db.rollback()
-                if exc.__class__.__name__ != "IntegrityError":
-                    raise
                 row = self.store.db.execute(
                     "SELECT * FROM economic_attributions WHERE external_reference=?", (key,)
                 ).fetchone()
@@ -240,6 +254,9 @@ class EconomicAttributionLedger:
                     raise ValueError("external_reference already maps to a different economic observation")
                 self._entries[key] = existing
                 return existing
+            except Exception:
+                self.store.db.rollback()
+                raise
             self._entries[key] = entry
             return entry
 
