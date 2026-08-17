@@ -48,14 +48,7 @@ class OpportunityRevenueBridge:
         self.revenue = revenue or RevenueEngine()
         self.sources: dict[str, RevenueSource] = {}
 
-    def admit(
-        self,
-        opportunity: Opportunity,
-        *,
-        qualification: EconomicQualification,
-        owner_role: str,
-        channel: str,
-    ) -> RevenueSource:
+    def admit(self, opportunity: Opportunity, *, qualification: EconomicQualification, owner_role: str, channel: str) -> RevenueSource:
         if opportunity.stage not in {OpportunityStage.APPROVED, OpportunityStage.RECOMMENDED}:
             raise ValueError("opportunity must be recommended or approved before revenue admission")
         if not qualification.is_qualified or qualification.opportunity_id != opportunity.opportunity_id:
@@ -63,22 +56,22 @@ class OpportunityRevenueBridge:
         if not owner_role.strip() or not channel.strip():
             raise ValueError("owner_role and channel are required")
         source = RevenueSource(
-            source_id=str(uuid4()),
-            opportunity_id=opportunity.opportunity_id,
-            owner_role=owner_role,
-            channel=channel,
+            source_id=str(uuid4()), opportunity_id=opportunity.opportunity_id, owner_role=owner_role, channel=channel,
             expected_daily_eur=max(Decimal("0"), opportunity.estimated_monthly_revenue_eur / Decimal("30")),
-            confidence=min(opportunity.confidence, qualification.confidence),
-            risk=opportunity.risk,
-            stage=SourceStage.VALIDATING,
+            confidence=min(opportunity.confidence, qualification.confidence), risk=opportunity.risk, stage=SourceStage.VALIDATING,
         )
         self.sources[source.source_id] = source
         return source
 
-    def record_observation(self, source_id: str, amount_eur: Decimal, *, external_reference: str | None = None) -> RevenueSource:
+    def record_observation(self, source_id: str, amount_eur: Decimal, *, external_reference: str | None = None, synthetic: bool = False) -> RevenueSource:
         source = self.sources[source_id]
         if amount_eur <= 0:
             raise ValueError("observed revenue must be positive")
+        if synthetic:
+            # Test/simulation data must never enter the productive economic ledger.
+            return source
+        if not external_reference or not external_reference.strip():
+            raise ValueError("productive revenue requires an externally verifiable reference")
         self.revenue.record(activity_id=source_id, amount_eur=amount_eur, source=source.channel, external_reference=external_reference)
         observed = self.revenue.total_for_activity(source_id)
         updated = RevenueSource(**{**source.__dict__, "stage": SourceStage.ACTIVE, "observed_daily_eur": observed})
