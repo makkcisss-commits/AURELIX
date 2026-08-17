@@ -92,3 +92,48 @@ def test_resume_parent_is_durable_after_restart(tmp_path):
     assert state.active_execution_id == "resume-1"
     assert state.status == "resume_reserved"
     restarted.close()
+
+
+def test_first_successful_execution_can_establish_mission_authority(tmp_path):
+    db = tmp_path / "runtime.db"
+    store = RuntimeStore(db)
+    coordinator = MissionResumeCoordinator(store)
+    coordinator.register(
+        mission_id="mission-first",
+        objective="complete first execution",
+        required_capabilities=[],
+    )
+
+    state = coordinator.activate(mission_id="mission-first", execution_id="execution-first")
+
+    assert state.status == "active"
+    assert state.active_execution_id == "execution-first"
+    assert state.parent_execution_id is None
+    assert state.failed_execution_id is None
+    store.close()
+
+
+def test_resume_activation_still_requires_reserved_execution(tmp_path):
+    db = tmp_path / "runtime.db"
+    store = RuntimeStore(db)
+    coordinator = MissionResumeCoordinator(store)
+    coordinator.register(
+        mission_id="mission-fenced",
+        objective="preserve resume fencing",
+        required_capabilities=[],
+    )
+    coordinator.block(
+        mission_id="mission-fenced",
+        execution_id="execution-parent",
+        reason="awaiting_validation",
+    )
+    assert coordinator.reserve_resume(mission_id="mission-fenced", execution_id="execution-resume")
+
+    try:
+        coordinator.activate(mission_id="mission-fenced", execution_id="wrong-execution")
+    except RuntimeError as exc:
+        assert "mission activation fenced" in str(exc)
+    else:
+        raise AssertionError("activation must reject an execution that does not own the reservation")
+
+    store.close()
