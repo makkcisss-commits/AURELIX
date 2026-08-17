@@ -100,7 +100,7 @@ class MissionResumeCoordinator:
             if is_failure:
                 cursor = self.store.db.execute(
                     "UPDATE mission_state SET status='blocked', active_execution_id=NULL, failed_execution_id=?, resume_state=?, updated_at=? WHERE mission_id=?",
-                    (execution_id, normalized_reason, normalized_reason, now, mission_id),
+                    (execution_id, normalized_reason, now, mission_id),
                 )
             else:
                 cursor = self.store.db.execute(
