@@ -64,21 +64,33 @@ class AdaptiveLoop:
         normalized = capability.strip().casefold()
         if not normalized:
             raise ValueError("capability is required")
-        self._durable_validated_capabilities.add(normalized)
         if self.durable_store is None:
+            self._durable_validated_capabilities.add(normalized)
             return
         with self.durable_store.lock:
             self.durable_store.db.execute("BEGIN IMMEDIATE")
             try:
+                row = self.durable_store.db.execute(
+                    "SELECT value FROM runtime_state WHERE key=?",
+                    (self._CAPABILITY_STATE_KEY,),
+                ).fetchone()
+                current = set()
+                if row is not None:
+                    data = json.loads(row[0])
+                    if not isinstance(data, list):
+                        raise RuntimeError("invalid durable capability state")
+                    current = {str(item).strip().casefold() for item in data if str(item).strip()}
+                current.add(normalized)
                 self.durable_store.db.execute(
                     "INSERT INTO runtime_state(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     (
                         self._CAPABILITY_STATE_KEY,
-                        json.dumps(sorted(self._durable_validated_capabilities)),
+                        json.dumps(sorted(current)),
                     ),
                 )
                 self.durable_store.db.commit()
+                self._durable_validated_capabilities = current
             except Exception:
                 self.durable_store.db.rollback()
                 raise
