@@ -26,6 +26,7 @@ def test_mission_identity_survives_restart(tmp_path):
     assert state.mission_id == "mission-1"
     assert state.objective == "validate a product opportunity"
     assert state.active_execution_id == "execution-1"
+    assert state.parent_execution_id is None
     assert state.status == "blocked"
     restarted.close()
 
@@ -55,8 +56,39 @@ def test_concurrent_resume_requests_create_one_execution(tmp_path):
     state = coordinator.get("mission-2")
     assert state is not None
     assert state.status == "resume_reserved"
+    assert state.parent_execution_id == "execution-parent"
     assert state.active_execution_id in {"resume-a", "resume-b"}
     jobs = [store.get("resume-a"), store.get("resume-b")]
     assert sum(job is not None for job in jobs) == 1
     assert sum(job is not None and job.status == "queued" for job in jobs) == 1
     store.close()
+
+
+def test_resume_parent_is_durable_after_restart(tmp_path):
+    db = tmp_path / "runtime.db"
+    store = RuntimeStore(db)
+    coordinator = MissionResumeCoordinator(store)
+    coordinator.register(
+        mission_id="mission-3",
+        objective="resume with durable provenance",
+        required_capabilities=["research-x"],
+    )
+    coordinator.block(
+        mission_id="mission-3",
+        execution_id="execution-parent",
+        reason="capability_learning_required",
+    )
+    assert coordinator.reserve_resume(mission_id="mission-3", execution_id="resume-1")
+    state = coordinator.get("mission-3")
+    assert state is not None
+    assert state.parent_execution_id == "execution-parent"
+    assert state.active_execution_id == "resume-1"
+    store.close()
+
+    restarted = RuntimeStore(db)
+    state = MissionResumeCoordinator(restarted).get("mission-3")
+    assert state is not None
+    assert state.parent_execution_id == "execution-parent"
+    assert state.active_execution_id == "resume-1"
+    assert state.status == "resume_reserved"
+    restarted.close()
