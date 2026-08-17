@@ -22,9 +22,9 @@ class RevenueRecord:
 class RevenueEngine:
     """Record revenue observations without manufacturing productive revenue.
 
-    ``record`` remains an observation API for backwards compatibility. Only
-    ``record_verified_external`` produces evidence eligible for productive
-    economic learning, and it requires an external reference.
+    ``record`` remains an observation API for backwards compatibility. A
+    non-empty external reference is the evidence boundary for productive
+    economic learning; unreferenced observations remain non-verified.
     """
 
     def __init__(self) -> None:
@@ -33,12 +33,13 @@ class RevenueEngine:
 
     def record(self, *, activity_id: str, amount_eur: Decimal, source: str,
                external_reference: str | None = None) -> RevenueRecord:
+        reference = external_reference.strip() if external_reference else None
         return self._record(
             activity_id=activity_id,
             amount_eur=amount_eur,
             source=source,
-            external_reference=external_reference,
-            verified_external=False,
+            external_reference=reference,
+            verified_external=bool(reference),
         )
 
     def record_verified_external(self, *, activity_id: str, amount_eur: Decimal,
