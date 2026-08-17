@@ -68,11 +68,11 @@ def test_same_external_observation_is_idempotent():
     assert len(ledger.all()) == 1
 
 
-def _record_from_process(db_path: str) -> EconomicAttributionLedger:
+def _record_from_process(db_path: str) -> tuple[str, str]:
     store = RuntimeStore(db_path)
     try:
         ledger = EconomicAttributionLedger(store)
-        return ledger.record(
+        entry = ledger.record(
             opportunity_id="opp-concurrent",
             source_id="provider",
             governor_decision_id="gov-concurrent",
@@ -81,6 +81,7 @@ def _record_from_process(db_path: str) -> EconomicAttributionLedger:
             verified=True,
             external_reference="payment-concurrent-1",
         )
+        return entry.external_reference, str(entry.observed_daily_eur)
     finally:
         store.close()
 
@@ -91,7 +92,7 @@ def test_same_external_reference_is_unique_across_processes(tmp_path: Path) -> N
         results = list(pool.map(_record_from_process, [db_path] * 16))
 
     assert len(results) == 16
-    assert all(result.external_reference == "payment-concurrent-1" for result in results)
+    assert all(reference == "payment-concurrent-1" for reference, _ in results)
     store = RuntimeStore(db_path)
     try:
         ledger = EconomicAttributionLedger(store)
