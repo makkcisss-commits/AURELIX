@@ -150,9 +150,19 @@ class AutonomyFabric:
                 self.store.db.rollback()
                 raise
 
-    def _mark_resume_running(self, blocked_execution_id: str, execution_id: str) -> None:
+    def _mark_resume_running(self, blocked_execution_id: str, claimed: JobRecord) -> None:
+        payload = {
+            "state": "running",
+            "execution_id": claimed.job_id,
+            "worker_id": claimed.worker_id,
+            "lease_token": claimed.lease_token,
+            "lease_until": claimed.lease_until,
+        }
         with self.store.lock, self.store.db:
-            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps({"state": "running", "execution_id": execution_id}, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
+            self.store.db.execute(
+                "UPDATE runtime_state SET value=? WHERE key=?",
+                (json.dumps(payload, sort_keys=True), f"mission-resume:{blocked_execution_id}"),
+            )
 
     def _mark_resume_completed(self, blocked_execution_id: str, execution_id: str) -> None:
         with self.store.lock, self.store.db:
@@ -266,7 +276,7 @@ class AutonomyFabric:
             raise
 
     def resume_mission(self, blocked_execution_id: str) -> AutonomyRun:
-        """Resume the original mission after its required capabilities are validated."""
+        """Resume a blocked mission exactly once per active reservation."""
         if self.adaptive_loop is None:
             raise RuntimeError("adaptive loop is unavailable")
         context = self._load_mission_context(blocked_execution_id)
@@ -280,12 +290,29 @@ class AutonomyFabric:
         if existing is not None and existing.status == "completed":
             result = self.store.get_result(resume_execution_id)
             return AutonomyRun(**result)
-        self._mark_resume_running(blocked_execution_id, resume_execution_id)
+
+        job = self.store.enqueue(
+            "autonomy.run",
+            {"objective": context["objective"], "required_capabilities": context["required_capabilities"]},
+            execution_id=resume_execution_id,
+        )
+        worker_id = f"autonomy:{resume_execution_id}"
+        claimed = self.store.claim(job.job_id, worker_id=worker_id)
+        if claimed is None:
+            raise RuntimeError(f"resume execution is not claimable: {resume_execution_id}")
+        self._mark_resume_running(blocked_execution_id, claimed)
         try:
-            result = self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
+            result = self.run_claimed(
+                claimed,
+                required_capabilities=context["required_capabilities"],
+                mission_id=context["mission_id"],
+            )
             self._mark_resume_completed(blocked_execution_id, resume_execution_id)
             return result
-        except Exception:
+        except Exception as exc:
+            current = self.store.get(resume_execution_id)
+            if current and current.status == "running":
+                self.store.finish(resume_execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             raise
 
     def close(self) -> None:
