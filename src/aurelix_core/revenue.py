@@ -13,8 +13,10 @@ class RevenueRecord:
     amount_eur: Decimal
     source: str
     external_reference: str | None
-    verified_external: bool
     recorded_at: datetime
+    # Keep the new field after the legacy positional fields so existing callers
+    # constructing RevenueRecord positionally remain source-compatible.
+    verified_external: bool = False
 
 
 class RevenueEngine:
