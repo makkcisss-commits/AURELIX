@@ -2,7 +2,7 @@ name: AURELIX CI
 
 on:
   push:
-    branches: [main, "agent/**", "feat/**"]
+    branches: [main, "agent/**", "feat/**", "fix/**", "hotfix/**"]
   pull_request:
   workflow_dispatch:
 
