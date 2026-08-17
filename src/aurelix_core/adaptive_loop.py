@@ -160,7 +160,22 @@ class AdaptiveLoop:
         return validated
 
     def capability_validated(self, capability: str) -> bool:
-        normalized = capability.casefold()
+        normalized = capability.strip().casefold()
+        if not normalized:
+            return False
+        if self.durable_store is not None:
+            with self.durable_store.lock:
+                row = self.durable_store.db.execute(
+                    "SELECT value FROM runtime_state WHERE key=?",
+                    (self._CAPABILITY_STATE_KEY,),
+                ).fetchone()
+            if row is not None:
+                data = json.loads(row[0])
+                if not isinstance(data, list):
+                    raise RuntimeError("invalid durable capability state")
+                self._durable_validated_capabilities = {
+                    str(item).strip().casefold() for item in data if str(item).strip()
+                }
         return (
             normalized in self._durable_validated_capabilities
             or any(item.name.casefold() == normalized and item.validated
