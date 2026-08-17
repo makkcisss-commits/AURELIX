@@ -38,6 +38,7 @@ jobs:
           tests/test_opportunity_revenue_bridge.py
           tests/test_approval_workflow.py
           tests/test_innovation.py
+          tests/test_resume_lease_integration.py
 
       - name: Run packaged smoke checks
         run: aurelix-smoke
