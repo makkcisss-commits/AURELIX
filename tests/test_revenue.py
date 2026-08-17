@@ -18,6 +18,20 @@ def test_negative_revenue_is_rejected() -> None:
         RevenueEngine().record(activity_id="activity-1", amount_eur=Decimal("-1"), source="test")
 
 
+def test_external_reference_marks_observation_verified_and_learning_eligible() -> None:
+    engine = RevenueEngine()
+    record = engine.record(
+        activity_id="activity-external",
+        amount_eur=Decimal("25.00"),
+        source="payment-provider",
+        external_reference=" payment-verified ",
+    )
+    assert record.verified_external is True
+    assert record.external_reference == "payment-verified"
+    assert engine.verified_total_for_activity("activity-external") == Decimal("25.00")
+    assert engine.learning_evidence() == [record]
+
+
 def test_verified_external_revenue_is_idempotent_and_learning_only_sees_verified() -> None:
     engine = RevenueEngine()
     first = engine.record_verified_external(
