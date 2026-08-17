@@ -157,10 +157,18 @@ class MissionResumeCoordinator:
                 raise
 
     def activate(self, *, mission_id: str, execution_id: str) -> MissionState:
+        """Mark a successful execution authoritative without weakening resume fencing.
+
+        A newly registered mission has no active execution yet, so its first
+        successful execution is allowed to establish the active execution. A
+        resumed mission, however, must already fence the exact reserved
+        execution id before activation.
+        """
         now = self._now()
         with self.store.lock, self.store.db:
             cursor = self.store.db.execute(
-                "UPDATE mission_state SET status='active', active_execution_id=?, failed_execution_id=NULL, resume_state=NULL, updated_at=? WHERE mission_id=? AND active_execution_id=?",
+                "UPDATE mission_state SET status='active', active_execution_id=?, failed_execution_id=NULL, resume_state=NULL, updated_at=? "
+                "WHERE mission_id=? AND (active_execution_id=? OR (active_execution_id IS NULL AND parent_execution_id IS NULL AND status='active'))",
                 (execution_id, now, mission_id, execution_id),
             )
             if cursor.rowcount != 1:
