@@ -1,5 +1,4 @@
 from pathlib import Path
-from uuid import uuid4
 
 from aurelix_core.adaptive_loop import AdaptiveLoop
 from aurelix_core.capability_escalation import CapabilityEscalator
@@ -93,7 +92,8 @@ def test_production_resume_path_preserves_mission_identity_and_creates_one_new_e
     db = tmp_path / "resume.db"
     store = RuntimeStore(db)
     intelligence = ContinuousIntelligence()
-    adaptive = AdaptiveLoop(intelligence, CapabilityEscalator(intelligence), durable_store=store)
+    capability_escalator = CapabilityEscalator(intelligence)
+    adaptive = AdaptiveLoop(intelligence, capability_escalator, durable_store=store)
     fabric = AutonomyFabric(store=store, adaptive_loop=adaptive)
 
     mission_id = "mission-production-resume"
@@ -154,8 +154,14 @@ def test_production_resume_path_preserves_mission_identity_and_creates_one_new_e
     fabric.close()
     store.close()
 
+    restarted_intelligence = ContinuousIntelligence()
+    restarted_capability_escalator = CapabilityEscalator(restarted_intelligence)
     reopened = RuntimeStore(db)
-    restarted_adaptive = AdaptiveLoop(ContinuousIntelligence(), CapabilityEscalator(ContinuousIntelligence()), durable_store=reopened)
+    restarted_adaptive = AdaptiveLoop(
+        restarted_intelligence,
+        restarted_capability_escalator,
+        durable_store=reopened,
+    )
     restarted_fabric = AutonomyFabric(store=reopened, adaptive_loop=restarted_adaptive)
     restarted_state = restarted_fabric.resume_coordinator.get(mission_id)
     assert restarted_state is not None
