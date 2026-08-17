@@ -62,7 +62,7 @@ class EngineFactory:
         self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.continuous_intelligence = ContinuousIntelligence()
         self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
-        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
+        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator, durable_store=self.runtime.store)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
 
