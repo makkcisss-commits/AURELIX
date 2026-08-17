@@ -9,6 +9,9 @@ on:
     - cron: "42 9 * * 1"
   workflow_dispatch:
 
+env:
+  FOD_URL: https://ams.fortify.com
+
 jobs:
   Fortify-AST-Scan:
     runs-on: ubuntu-latest
@@ -31,16 +34,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          client_ready=false
+          user_ready=false
           if [[ -n "${FOD_CLIENT_ID:-}" && -n "${FOD_CLIENT_SECRET:-}" ]]; then
+            client_ready=true
+          fi
+          if [[ -n "${FOD_TENANT:-}" && -n "${FOD_USER:-}" && -n "${FOD_PAT:-}" ]]; then
+            user_ready=true
+          fi
+          if [[ "${client_ready}" == true && "${user_ready}" == true ]]; then
+            echo "Fortify configuration is ambiguous: configure exactly one authentication mode." >&2
+            exit 1
+          fi
+          if [[ "${client_ready}" == true ]]; then
+            echo "mode=client" >> "$GITHUB_OUTPUT"
             echo "Fortify configuration: client credentials present."
             exit 0
           fi
-          if [[ -n "${FOD_TENANT:-}" && -n "${FOD_USER:-}" && -n "${FOD_PAT:-}" ]]; then
+          if [[ "${user_ready}" == true ]]; then
+            echo "mode=user" >> "$GITHUB_OUTPUT"
             echo "Fortify configuration: user credentials present."
             exit 0
           fi
           echo "BLOCKED_EXTERNAL_DEPENDENCY: Fortify credentials are not configured." >&2
-          echo "Configure either FOD_CLIENT_ID/FOD_CLIENT_SECRET or FOD_TENANT/FOD_USER/FOD_PAT in GitHub Actions secrets." >&2
+          echo "Configure exactly one of: FOD_CLIENT_ID/FOD_CLIENT_SECRET or FOD_TENANT/FOD_USER/FOD_PAT." >&2
           exit 1
 
       - name: Run Fortify Scan
@@ -49,14 +66,10 @@ jobs:
           sast-scan: true
           debricked-sca-scan: true
         env:
-          FOD_URL: https://ams.fortify.com
+          FOD_URL: ${{ env.FOD_URL }}
           FOD_TENANT: ${{ secrets.FOD_TENANT }}
           FOD_USER: ${{ secrets.FOD_USER }}
           FOD_PASSWORD: ${{ secrets.FOD_PAT }}
           FOD_CLIENT_ID: ${{ secrets.FOD_CLIENT_ID }}
           FOD_CLIENT_SECRET: ${{ secrets.FOD_CLIENT_SECRET }}
-          SSC_URL: ${{ vars.SSC_URL }}
-          SSC_TOKEN: ${{ secrets.SSC_TOKEN }}
-          SC_SAST_TOKEN: ${{ secrets.SC_CLIENT_AUTH_TOKEN }}
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
-          SC_SAST_SENSOR_VERSION: 24.4.0
