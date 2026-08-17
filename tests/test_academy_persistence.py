@@ -43,3 +43,26 @@ def test_concurrent_academy_writers_do_not_lose_knowledge(tmp_path) -> None:
     assert len(ids) == 32
     assert len(set(ids)) == 32
     assert {item.knowledge_id for item in restored.all()} == set(ids)
+
+
+def test_direct_academy_run_binds_the_supplied_store_for_later_durable_knowledge(tmp_path) -> None:
+    db_path = tmp_path / "academy-direct-run.db"
+    store = RuntimeStore(db_path)
+    academy = AcademyEngine()
+
+    result = academy.run({"objective": "durable direct academy", "evidence": [], "status": "no_evidence"}, store)
+    assert result["status"] == "insufficient_evidence"
+
+    item = academy.create_knowledge(
+        title="Direct durable lesson",
+        summary="Created after Academy received its runtime store through run",
+        learning_refs=["learning-direct"],
+        source_refs=["source-direct"],
+        confidence=0.8,
+    )
+    store.close()
+
+    reopened = RuntimeStore(db_path)
+    restored = AcademyEngine(reopened).get(item.knowledge_id)
+    assert restored == item
+    reopened.close()
