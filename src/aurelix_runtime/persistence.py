@@ -165,20 +165,20 @@ class RuntimeStore:
         self.record_audit(None, event_type, metadata)
 
     def complete(self, job_id: str, result: dict | None = None, worker_id: str | None = None, lease_token: str | None = None) -> dict:
-        now, result = self._now(), result or {"ok": True}
+        now_dt = datetime.now(timezone.utc); now = now_dt.isoformat(); result = result or {"ok": True}
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                row = self.db.execute("SELECT status, worker_id, lease_token FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
                 if row is None: raise KeyError(f"job not found: {job_id}")
                 if row["status"] == "completed":
                     existing = self.get_result(job_id); self.db.commit(); return existing or result
                 if row["status"] != "running": raise RuntimeError(f"job {job_id} cannot complete from state {row['status']}")
-                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token:
+                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
                     self.db.rollback(); raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
                 self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps(result, sort_keys=True), now))
                 stored = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (job_id,)).fetchone()
-                cursor = self.db.execute("UPDATE jobs SET status='completed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=NULL WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (now, job_id, worker_id, lease_token))
+                cursor = self.db.execute("UPDATE jobs SET status='completed', updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=NULL WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=? AND lease_until > ?", (now, job_id, worker_id, lease_token, now))
                 if cursor.rowcount != 1:
                     self.db.rollback(); raise LeaseLostError(f"job {job_id} lost ownership during completion")
                 self.db.commit(); return json.loads(stored[0]) if stored else result
@@ -188,17 +188,17 @@ class RuntimeStore:
     def finish(self, job_id: str, success: bool, error: str | None = None, retry: bool = False, result: dict | None = None, worker_id: str | None = None, lease_token: str | None = None) -> None:
         if success:
             self.complete(job_id, result or {"ok": True}, worker_id=worker_id, lease_token=lease_token); return
-        now = self._now()
+        now_dt = datetime.now(timezone.utc); now = now_dt.isoformat()
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                row = self.db.execute("SELECT status, worker_id, lease_token FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
                 if row is None: raise KeyError(f"job not found: {job_id}")
                 if row["status"] != "running": raise RuntimeError(f"job {job_id} cannot finish from state {row['status']}")
-                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token:
+                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
                     self.db.rollback(); raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
                 status = "queued" if retry else "failed"
-                cursor = self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (status, now, error, job_id, worker_id, lease_token))
+                cursor = self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=? AND lease_until > ?", (status, now, error, job_id, worker_id, lease_token, now))
                 if cursor.rowcount != 1:
                     self.db.rollback(); raise LeaseLostError(f"job {job_id} lost ownership during failure finalization")
                 if not retry:
