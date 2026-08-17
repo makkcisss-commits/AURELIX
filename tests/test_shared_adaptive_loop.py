@@ -1,5 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from aurelix_core.engine_factory import EngineFactory
-from aurelix_core.continuous_intelligence import EvidenceKind
+from aurelix_core.continuous_intelligence import ContinuousIntelligence, EvidenceKind
+from aurelix_core.adaptive_loop import AdaptiveLoop
+from aurelix_core.capability_escalation import CapabilityEscalator
+from aurelix_runtime.persistence import RuntimeStore
 from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
 
@@ -65,3 +70,37 @@ def test_validated_capability_survives_runtime_restart(tmp_path):
     )
     assert restarted_factory.adaptive_loop.can_resume("resume-after-restart") is True
     restarted.store.close()
+
+
+def test_concurrent_durable_capability_writers_merge_state(tmp_path):
+    db = tmp_path / "adaptive-capability-concurrent.db"
+
+    def persist(index: int) -> str:
+        store = RuntimeStore(db)
+        try:
+            intelligence = ContinuousIntelligence()
+            loop = AdaptiveLoop(
+                intelligence,
+                CapabilityEscalator(intelligence),
+                durable_store=store,
+            )
+            capability = f"capability-{index}"
+            loop._persist_validated_capability(capability)
+            return capability
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        capabilities = list(pool.map(persist, range(32)))
+
+    store = RuntimeStore(db)
+    try:
+        intelligence = ContinuousIntelligence()
+        loop = AdaptiveLoop(
+            intelligence,
+            CapabilityEscalator(intelligence),
+            durable_store=store,
+        )
+        assert loop._durable_validated_capabilities == set(capabilities)
+    finally:
+        store.close()
