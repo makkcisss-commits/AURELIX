@@ -104,3 +104,29 @@ def test_concurrent_durable_capability_writers_merge_state(tmp_path):
         assert loop._durable_validated_capabilities == set(capabilities)
     finally:
         store.close()
+
+
+def test_existing_runtime_instance_sees_capability_validated_by_another_instance(tmp_path):
+    db = tmp_path / "adaptive-cross-instance.db"
+    first_store = RuntimeStore(db)
+    second_store = RuntimeStore(db)
+    try:
+        first_intelligence = ContinuousIntelligence()
+        second_intelligence = ContinuousIntelligence()
+        first = AdaptiveLoop(
+            first_intelligence,
+            CapabilityEscalator(first_intelligence),
+            durable_store=first_store,
+        )
+        second = AdaptiveLoop(
+            second_intelligence,
+            CapabilityEscalator(second_intelligence),
+            durable_store=second_store,
+        )
+
+        first._persist_validated_capability("crm-write")
+        assert first.capability_validated("crm-write") is True
+        assert second.capability_validated("crm-write") is True
+    finally:
+        second_store.close()
+        first_store.close()
