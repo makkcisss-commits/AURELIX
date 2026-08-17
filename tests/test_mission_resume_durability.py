@@ -137,3 +137,26 @@ def test_resume_activation_still_requires_reserved_execution(tmp_path):
         raise AssertionError("activation must reject an execution that does not own the reservation")
 
     store.close()
+
+
+def test_unexpected_execution_reason_records_failed_provenance(tmp_path):
+    db = tmp_path / "runtime.db"
+    store = RuntimeStore(db)
+    coordinator = MissionResumeCoordinator(store)
+    coordinator.register(
+        mission_id="mission-failed",
+        objective="preserve failed execution provenance",
+        required_capabilities=[],
+    )
+
+    state = coordinator.block(
+        mission_id="mission-failed",
+        execution_id="execution-failed",
+        reason="RuntimeError",
+    )
+
+    assert state.status == "blocked"
+    assert state.active_execution_id is None
+    assert state.failed_execution_id == "execution-failed"
+    assert state.resume_state == "RuntimeError"
+    store.close()
