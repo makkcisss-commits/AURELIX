@@ -1,8 +1,11 @@
+from concurrent.futures import ProcessPoolExecutor
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from aurelix_core.economic_attribution import EconomicAttributionLedger
+from aurelix_runtime.persistence import RuntimeStore
 
 
 def test_records_verified_attribution_with_provenance():
@@ -63,3 +66,37 @@ def test_same_external_observation_is_idempotent():
     second = ledger.record(**kwargs)
     assert first == second
     assert len(ledger.all()) == 1
+
+
+def _record_from_process(db_path: str) -> tuple[str, str]:
+    store = RuntimeStore(db_path)
+    try:
+        ledger = EconomicAttributionLedger(store)
+        entry = ledger.record(
+            opportunity_id="opp-concurrent",
+            source_id="provider",
+            governor_decision_id="gov-concurrent",
+            expected_daily_eur=Decimal("10"),
+            observed_daily_eur=Decimal("12"),
+            verified=True,
+            external_reference="payment-concurrent-1",
+        )
+        return entry.external_reference, str(entry.observed_daily_eur)
+    finally:
+        store.close()
+
+
+def test_same_external_reference_is_unique_across_processes(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "economic-attribution.db")
+    with ProcessPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(_record_from_process, [db_path] * 16))
+
+    assert len(results) == 16
+    assert all(reference == "payment-concurrent-1" for reference, _ in results)
+    store = RuntimeStore(db_path)
+    try:
+        ledger = EconomicAttributionLedger(store)
+        assert len(ledger.all()) == 1
+        assert ledger.all()[0].observed_daily_eur == Decimal("12")
+    finally:
+        store.close()

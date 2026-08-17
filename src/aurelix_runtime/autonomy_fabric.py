@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, is_dataclass, asdict
 import json
 import threading
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -111,6 +112,8 @@ class AutonomyFabric:
     def _claim_resume_execution(self, blocked_execution_id: str) -> str:
         key = f"mission-resume:{blocked_execution_id}"
         resume_execution_id = f"{blocked_execution_id}:resume:{uuid4()}"
+        now = time.time()
+        lease_until = now + max(1.0, float(self.store.lease_seconds))
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
@@ -118,22 +121,48 @@ class AutonomyFabric:
                 if row is not None:
                     existing = json.loads(row[0])
                     state = existing.get("state")
-                    if state in {"reserved", "running"}:
-                        self.store.db.commit()
-                        raise RuntimeError("mission resume already in progress")
-                    if state == "completed" and existing.get("execution_id"):
+                    if state == "reserved":
+                        existing_lease_until = existing.get("lease_until")
+                        if existing_lease_until is None:
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume reservation has no lease metadata")
+                        try:
+                            existing_lease_until = float(existing_lease_until)
+                        except (TypeError, ValueError):
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume reservation has invalid lease metadata")
+                        if existing_lease_until > now:
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume already in progress")
+                    elif state == "running":
+                        existing_execution_id = existing.get("execution_id")
+                        existing_job = self.store.get(existing_execution_id) if existing_execution_id else None
+                        if existing_job is not None and existing_job.status == "running" and existing_job.lease_until and existing_job.lease_until > self.store._now():
+                            self.store.db.commit()
+                            raise RuntimeError("mission resume already in progress")
+                    elif state == "completed" and existing.get("execution_id"):
                         self.store.db.commit()
                         return str(existing["execution_id"])
-                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id}, sort_keys=True)))
+                self.store.db.execute("INSERT INTO runtime_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps({"state": "reserved", "execution_id": resume_execution_id, "lease_until": lease_until}, sort_keys=True)))
                 self.store.db.commit()
                 return resume_execution_id
             except Exception:
                 self.store.db.rollback()
                 raise
 
-    def _mark_resume_running(self, blocked_execution_id: str, execution_id: str) -> None:
+    def _mark_resume_running(self, blocked_execution_id: str, claimed: JobRecord) -> None:
+        payload = {
+            "state": "running",
+            "execution_id": claimed.job_id,
+            "worker_id": claimed.worker_id,
+            "lease_token": claimed.lease_token,
+            "lease_until": claimed.lease_until,
+        }
         with self.store.lock, self.store.db:
-            self.store.db.execute("UPDATE runtime_state SET value=? WHERE key=?", (json.dumps({"state": "running", "execution_id": execution_id}, sort_keys=True), f"mission-resume:{blocked_execution_id}"))
+            self.store.db.execute(
+                "UPDATE runtime_state SET value=? WHERE key=?",
+                (json.dumps(payload, sort_keys=True), f"mission-resume:{blocked_execution_id}"),
+            )
 
     def _mark_resume_completed(self, blocked_execution_id: str, execution_id: str) -> None:
         with self.store.lock, self.store.db:
@@ -247,7 +276,7 @@ class AutonomyFabric:
             raise
 
     def resume_mission(self, blocked_execution_id: str) -> AutonomyRun:
-        """Resume the original mission after its required capabilities are validated."""
+        """Resume a blocked mission exactly once per active reservation."""
         if self.adaptive_loop is None:
             raise RuntimeError("adaptive loop is unavailable")
         context = self._load_mission_context(blocked_execution_id)
@@ -261,12 +290,29 @@ class AutonomyFabric:
         if existing is not None and existing.status == "completed":
             result = self.store.get_result(resume_execution_id)
             return AutonomyRun(**result)
-        self._mark_resume_running(blocked_execution_id, resume_execution_id)
+
+        job = self.store.enqueue(
+            "autonomy.run",
+            {"objective": context["objective"], "required_capabilities": context["required_capabilities"]},
+            execution_id=resume_execution_id,
+        )
+        worker_id = f"autonomy:{resume_execution_id}"
+        claimed = self.store.claim(job.job_id, worker_id=worker_id)
+        if claimed is None:
+            raise RuntimeError(f"resume execution is not claimable: {resume_execution_id}")
+        self._mark_resume_running(blocked_execution_id, claimed)
         try:
-            result = self.run(context["objective"], execution_id=resume_execution_id, required_capabilities=context["required_capabilities"], mission_id=context["mission_id"])
+            result = self.run_claimed(
+                claimed,
+                required_capabilities=context["required_capabilities"],
+                mission_id=context["mission_id"],
+            )
             self._mark_resume_completed(blocked_execution_id, resume_execution_id)
             return result
-        except Exception:
+        except Exception as exc:
+            current = self.store.get(resume_execution_id)
+            if current and current.status == "running":
+                self.store.finish(resume_execution_id, False, str(exc), retry=False, worker_id=claimed.worker_id, lease_token=claimed.lease_token)
             raise
 
     def close(self) -> None:
