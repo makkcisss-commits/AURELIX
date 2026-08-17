@@ -1,6 +1,8 @@
 name: AURELIX System Regression
 
 on:
+  push:
+    branches: [main, "agent/**", "feat/**", "fix/**", "hotfix/**"]
   pull_request:
   workflow_dispatch:
 
