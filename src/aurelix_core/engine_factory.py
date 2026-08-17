@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .academy import AcademyEngine as CuratedAcademy
+from .academy import AcademyEngine
 from .academy_agent import AcademyAgent
 from .adaptive_loop import AdaptiveLoop
 from .capability_escalation import CapabilityEscalator
@@ -23,7 +23,7 @@ from .system_orchestrator import SystemOrchestrator
 from aurelix_runtime.autonomy_fabric import AutonomyFabric
 from aurelix_runtime.enterprise_loop import EnterpriseLoop
 from aurelix_runtime.experiment_runner import ExperimentRunner
-from aurelix_runtime.integrated_engines import AcademyEngine, BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine
+from aurelix_runtime.integrated_engines import BusinessEngine, EvaluationEngine, Experiment, ExperimentEngine, InnovationEngine, KnowledgeEngine, OpportunityEngine, ResearchEngine
 from aurelix_runtime.knowledge_store import KnowledgeRepository, SQLiteKnowledgeRepository
 from aurelix_runtime.knowledge_learning import KnowledgeLearningService
 from aurelix_runtime.research_knowledge import ResearchToKnowledge
@@ -62,12 +62,16 @@ class EngineFactory:
         self.knowledge_learning = KnowledgeLearningService(self.knowledge)
         self.continuous_intelligence = ContinuousIntelligence()
         self.capability_escalator = CapabilityEscalator(self.continuous_intelligence)
-        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator)
+        self.adaptive_loop = AdaptiveLoop(self.continuous_intelligence, self.capability_escalator, durable_store=self.runtime.store)
         self.research = ResearchEngine(self.research_provider)
         self.research_to_knowledge = ResearchToKnowledge(self.research_provider, self.knowledge) if self.research_provider else None
-        self.academy = AcademyEngine(self.model_gateway)
+
+        # One Academy object owns both the execution adapter and durable knowledge.
+        # There is deliberately no second Academy state container.
+        self.academy = AcademyEngine(store=self.runtime.store, model_gateway=self.model_gateway)
+        self.academy_runtime = self.academy
+        self.curated_academy = self.academy
         self.academy_agent = AcademyAgent(self.academy)
-        self.curated_academy = CuratedAcademy()
         self.knowledge_engine = KnowledgeEngine()
         self.innovation = InnovationEngine(self.model_gateway)
         self.experiment = ExperimentEngine()

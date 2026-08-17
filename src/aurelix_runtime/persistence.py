@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,29 +37,45 @@ class RuntimeStore:
         self.db.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         self._supports_interrupted = True
-        with self.lock, self.db:
-            self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.execute("PRAGMA foreign_keys=ON")
+        with self.lock:
             self.db.execute("PRAGMA busy_timeout=30000")
-            self.db.executescript("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY, name TEXT NOT NULL, payload TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('queued','running','interrupted','completed','failed')),
-                    attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    started_at TEXT, heartbeat_at TEXT, worker_id TEXT, lease_token TEXT, lease_until TEXT, last_error TEXT
-                );
-                CREATE TABLE IF NOT EXISTS job_results (job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), result TEXT NOT NULL, created_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS audit_events (event_id TEXT PRIMARY KEY, job_id TEXT, event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS experiments (experiment_id TEXT PRIMARY KEY, hypothesis TEXT NOT NULL, success_criteria TEXT NOT NULL, status TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS observations (id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL, observation TEXT NOT NULL, recorded_at TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at, job_id);
-                CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
-                CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_until);
-                CREATE INDEX IF NOT EXISTS idx_observations_experiment ON observations(experiment_id, recorded_at);
-                CREATE VIEW IF NOT EXISTS audit_log AS SELECT event_id, job_id, event_type, payload, created_at FROM audit_events;
-            """)
-            self._migrate_jobs_schema()
+            self._configure_wal()
+            with self.db:
+                self.db.execute("PRAGMA foreign_keys=ON")
+                self.db.executescript("""
+                    CREATE TABLE IF NOT EXISTS jobs (
+                        job_id TEXT PRIMARY KEY, name TEXT NOT NULL, payload TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('queued','running','interrupted','completed','failed')),
+                        attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                        started_at TEXT, heartbeat_at TEXT, worker_id TEXT, lease_token TEXT, lease_until TEXT, last_error TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS job_results (job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), result TEXT NOT NULL, created_at TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS job_checkpoints (job_id TEXT PRIMARY KEY REFERENCES jobs(job_id), result TEXT NOT NULL, created_at TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS audit_events (event_id TEXT PRIMARY KEY, job_id TEXT, event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS experiments (experiment_id TEXT PRIMARY KEY, hypothesis TEXT NOT NULL, success_criteria TEXT NOT NULL, status TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS observations (id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL, observation TEXT NOT NULL, recorded_at TEXT NOT NULL);
+                    CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, created_at, job_id);
+                    CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat ON jobs(status, heartbeat_at);
+                    CREATE INDEX IF NOT EXISTS idx_jobs_lease ON jobs(status, lease_until);
+                    CREATE INDEX IF NOT EXISTS idx_observations_experiment ON observations(experiment_id, recorded_at);
+                    CREATE VIEW IF NOT EXISTS audit_log AS SELECT event_id, job_id, event_type, payload, created_at FROM audit_events;
+                """)
+                self._migrate_jobs_schema()
+
+    def _configure_wal(self) -> None:
+        """Enable WAL without allowing concurrent bootstraps to fail spuriously."""
+        deadline = time.monotonic() + 35.0
+        delay = 0.02
+        while True:
+            try:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 1.5, 0.5)
 
     def _migrate_jobs_schema(self) -> None:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(jobs)").fetchall()}
@@ -95,6 +112,11 @@ class RuntimeStore:
     def get_result(self, job_id: str) -> dict | None:
         with self.lock:
             row = self.db.execute("SELECT result FROM job_results WHERE job_id=?", (job_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def get_checkpoint(self, job_id: str) -> dict | None:
+        with self.lock:
+            row = self.db.execute("SELECT result FROM job_checkpoints WHERE job_id=?", (job_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def claim_next(self, max_attempts: int = 3, worker_id: str | None = None) -> JobRecord | None:
@@ -177,7 +199,7 @@ class RuntimeStore:
             if not retry: self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
 
     def record_result(self, job_id: str, result: dict, worker_id: str | None = None, lease_token: str | None = None) -> None:
-        """Persist an intermediate result only while the current lease is valid."""
+        """Persist an intermediate checkpoint only while the current lease is valid."""
         now_dt = datetime.now(timezone.utc); now = now_dt.isoformat()
         with self.lock, self.db:
             row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -188,7 +210,7 @@ class RuntimeStore:
                 raise RuntimeError(f"job {job_id} cannot record a result from state {row['status']}")
             if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
                 raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
-            self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps(result, sort_keys=True), now))
+            self.db.execute("INSERT INTO job_checkpoints(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at", (job_id, json.dumps(result, sort_keys=True), now))
 
     def fail(self, job_id: str, error: str, retry: bool = True, worker_id: str | None = None, lease_token: str | None = None) -> None:
         self.finish(job_id, False, error, retry=retry, worker_id=worker_id, lease_token=lease_token)

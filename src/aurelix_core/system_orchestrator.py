@@ -29,14 +29,16 @@ class SystemOrchestrator:
 
     def __init__(self, factory) -> None:
         self.factory = factory
-        # These are composition-owned dependencies. Creating a second
-        # ContinuousIntelligence or Academy here would split state and make
-        # the enterprise appear integrated while actually learning in silos.
         self.intelligence = factory.continuous_intelligence
+        self.academy = factory.academy
+        # Compatibility alias: this is the same canonical Academy object, not a
+        # second authority or state container.
         self.curated_academy = factory.curated_academy
+        if self.curated_academy is not self.academy:
+            raise RuntimeError("Academy authority split detected")
         self.academy_bridge = AcademyIntelligenceBridge(self.intelligence)
         self.proposal_boundary = AcademyGovernorBoundary()
-        self.economic_ledger = EconomicAttributionLedger()
+        self.economic_ledger = EconomicAttributionLedger(store=factory.runtime.store)
         self.verified_learning = VerifiedEconomicLearning(self.economic_ledger)
         self.learning = LearningEngine()
         self.governor = factory.governor if hasattr(factory, "governor") else Governor()
@@ -46,17 +48,14 @@ class SystemOrchestrator:
         objective = objective.strip()
         if not objective:
             raise ValueError("objective is required")
-
         enterprise = self.factory.run_enterprise_cycle(objective, approved=False)
         enterprise_dict = self._as_mapping(enterprise)
         academy_payload = enterprise_dict["academy"]
         knowledge_payload = enterprise_dict["knowledge"]
-
         intelligence = self._project_academy(academy_payload, knowledge_payload, objective)
         governance = self._govern_proposal(intelligence, objective)
         economic = self._emit_economic_learning()
         diagnostics = self._diagnostics()
-
         status = "attention" if governance.get("route") == "BLOCKED" else str(enterprise_dict.get("status") or "unknown")
         result = SystemCycleResult(objective=objective, status=status, enterprise=enterprise_dict, intelligence=intelligence, governance=governance, economic_learning=economic, diagnostics=diagnostics)
         self.factory.runtime.store.audit("system.cycle.completed", "system_orchestrator", objective, status, {"governance_route": governance.get("route"), "new_learning": economic["new_signals"]})
@@ -64,7 +63,6 @@ class SystemOrchestrator:
 
     @staticmethod
     def _as_mapping(value: Any) -> dict[str, Any]:
-        """Normalize canonical cycle results while retaining computed properties."""
         if is_dataclass(value):
             result = asdict(value)
         elif isinstance(value, Mapping):
@@ -78,14 +76,13 @@ class SystemOrchestrator:
         return result
 
     def record_verified_economic_outcome(self, *, opportunity_id: str, source_id: str, expected_daily_eur: Decimal, observed_daily_eur: Decimal, governor_decision_id: str, resource_scope: str | None = None, external_reference: str | None = None) -> EconomicAttribution:
-        """Record real realized economics; forecasts can never enter this path."""
         entry = self.economic_ledger.record(opportunity_id=opportunity_id, source_id=source_id, expected_daily_eur=expected_daily_eur, observed_daily_eur=observed_daily_eur, governor_decision_id=governor_decision_id, resource_scope=resource_scope, verified=True, external_reference=external_reference)
         self.factory.runtime.store.audit("economic.attribution.recorded", "economic_ledger", opportunity_id, "verified", {"source_id": source_id, "governor_decision_id": governor_decision_id})
         return entry
 
     def status(self) -> dict[str, Any]:
         runtime = self.factory.runtime
-        return {"runtime": runtime.store.status(), "economic_learning": self.verified_learning.learning_context(), "learning_items": len(self.learning._items), "proposal_count": len(self._proposals), "intelligence": {"domains": len(self.intelligence.domains), "objectives": len(self.intelligence.objectives), "evidence": len(self.intelligence.evidence), "knowledge": len(self.intelligence.knowledge)}}
+        return {"runtime": runtime.store.status(), "economic_learning": self.verified_learning.learning_context(), "learning_items": len(self.learning._items), "proposal_count": len(self._proposals), "intelligence": {"domains": len(self.intelligence.domains), "objectives": len(self.intelligence.objectives), "evidence": len(self.intelligence.evidence), "knowledge": len(self.intelligence.knowledge)}, "academy_knowledge": len(self.academy.all())}
 
     def _project_academy(self, academy_payload: dict[str, Any], knowledge_payload: dict[str, Any], objective: str) -> dict[str, Any]:
         knowledge_id = knowledge_payload.get("knowledge_id")
@@ -98,9 +95,9 @@ class SystemOrchestrator:
             source = item.get("source") if isinstance(item, dict) else getattr(item, "source", "")
             if source:
                 source_refs.append(str(source))
-        curated = self.curated_academy.create_knowledge(title=f"AURELIX Academy: {objective[:120]}", summary="\n".join(lessons), learning_refs=[str(knowledge_id)], source_refs=source_refs or [str(knowledge_id)], confidence=1.0 if knowledge_payload.get("validated") else 0.5)
-        item, projection = self.academy_bridge.project_knowledge(curated, domain="general")
-        return {"status": "projected", "knowledge_id": item.knowledge_id, "objective_id": projection.objective_id, "evidence_ids": list(projection.evidence_ids), "domain": projection.domain, "confidence": item.confidence}
+        canonical = self.academy.create_knowledge(title=f"AURELIX Academy: {objective[:120]}", summary="\n".join(lessons), learning_refs=[str(knowledge_id)], source_refs=source_refs or [str(knowledge_id)], confidence=1.0 if knowledge_payload.get("validated") else 0.5)
+        item, projection = self.academy_bridge.project_knowledge(canonical, domain="general")
+        return {"status": "projected", "knowledge_id": item.knowledge_id, "objective_id": projection.objective_id, "evidence_ids": list(projection.evidence_ids), "domain": projection.domain, "confidence": canonical.confidence}
 
     def _govern_proposal(self, intelligence: dict[str, Any], objective: str) -> dict[str, Any]:
         if intelligence.get("status") != "projected":
