@@ -60,7 +60,20 @@ jobs:
           echo "Configure exactly one of: FOD_CLIENT_ID/FOD_CLIENT_SECRET or FOD_TENANT/FOD_USER/FOD_PAT." >&2
           exit 1
 
-      - name: Run Fortify Scan
+      - name: Run Fortify Scan with client credentials
+        if: steps.config.outputs.mode == 'client'
+        uses: fortify/github-action@ef5539bf4bd9c45c0bd971978f635a69eae55297
+        with:
+          sast-scan: true
+          debricked-sca-scan: true
+        env:
+          FOD_URL: ${{ env.FOD_URL }}
+          FOD_CLIENT_ID: ${{ secrets.FOD_CLIENT_ID }}
+          FOD_CLIENT_SECRET: ${{ secrets.FOD_CLIENT_SECRET }}
+          DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
+
+      - name: Run Fortify Scan with user credentials
+        if: steps.config.outputs.mode == 'user'
         uses: fortify/github-action@ef5539bf4bd9c45c0bd971978f635a69eae55297
         with:
           sast-scan: true
@@ -70,6 +83,4 @@ jobs:
           FOD_TENANT: ${{ secrets.FOD_TENANT }}
           FOD_USER: ${{ secrets.FOD_USER }}
           FOD_PASSWORD: ${{ secrets.FOD_PAT }}
-          FOD_CLIENT_ID: ${{ secrets.FOD_CLIENT_ID }}
-          FOD_CLIENT_SECRET: ${{ secrets.FOD_CLIENT_SECRET }}
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
