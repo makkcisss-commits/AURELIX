@@ -1,5 +1,6 @@
 from aurelix_core.engine_factory import EngineFactory
 from aurelix_core.continuous_intelligence import EvidenceKind
+from aurelix_runtime.runtime import AurelixRuntime, RuntimeConfig
 
 
 def test_canonical_composition_shares_one_adaptive_loop() -> None:
@@ -30,10 +31,16 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
         reference="test://crm-write/proof",
         strength=1.0,
     )
-    factory.continuous_intelligence.validate_capability(
-        name="crm-write",
-        domain="capability-development",
-        required_competencies=("crm-write",),
+    evaluation = factory.continuous_intelligence.evaluate(
+        objective_id=objective.objective_id,
+        score=1.0,
+        evidence_refs=(evidence.evidence_id,),
+    )
+    factory.adaptive_loop.validate_learning(
+        execution_id=execution_id,
+        capability="crm-write",
+        objective_id=objective.objective_id,
+        evaluation_id=evaluation.evaluation_id,
         evidence_refs=(evidence.evidence_id,),
     )
 
@@ -41,3 +48,20 @@ def test_canonical_composition_shares_one_adaptive_loop() -> None:
     resumed = factory.adaptive_loop.resume_ready(execution_id)
     assert resumed.blocked is False
     factory.autonomy_fabric.close()
+
+
+def test_validated_capability_survives_runtime_restart(tmp_path):
+    db = tmp_path / "adaptive-capability.db"
+    runtime = AurelixRuntime(RuntimeConfig(database_path=str(db)))
+    factory = EngineFactory(runtime=runtime)
+    factory.adaptive_loop._persist_validated_capability("crm-write")
+    assert factory.adaptive_loop.capability_validated("crm-write") is True
+    runtime.store.close()
+
+    restarted = AurelixRuntime(RuntimeConfig(database_path=str(db)))
+    restarted_factory = EngineFactory(runtime=restarted)
+    restarted_factory.adaptive_loop.register_mission(
+        "resume-after-restart", "resume a validated capability", ["crm-write"]
+    )
+    assert restarted_factory.adaptive_loop.can_resume("resume-after-restart") is True
+    restarted.store.close()
