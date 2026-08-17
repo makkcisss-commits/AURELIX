@@ -99,7 +99,7 @@ class MissionResumeCoordinator:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
                 row = self.store.db.execute(
-                    "SELECT status, active_execution_id, objective, required_capabilities FROM mission_state WHERE mission_id=?",
+                    "SELECT status, active_execution_id, parent_execution_id, objective, required_capabilities FROM mission_state WHERE mission_id=?",
                     (mission_id,),
                 ).fetchone()
                 if row is None or row["status"] != "blocked":
@@ -120,7 +120,7 @@ class MissionResumeCoordinator:
                     (execution_id, "autonomy.run", json.dumps(payload, sort_keys=True), "queued", 0, now, now),
                 )
                 cursor = self.store.db.execute(
-                    "UPDATE mission_state SET status='resume_reserved', active_execution_id=?, failed_execution_id=NULL, updated_at=? WHERE mission_id=? AND status='blocked'",
+                    "UPDATE mission_state SET status='resume_reserved', parent_execution_id=COALESCE(parent_execution_id, active_execution_id), active_execution_id=?, failed_execution_id=NULL, updated_at=? WHERE mission_id=? AND status='blocked'",
                     (execution_id, now, mission_id),
                 )
                 if cursor.rowcount != 1:
@@ -147,7 +147,7 @@ class MissionResumeCoordinator:
                         (now, execution_id),
                     )
                     self.store.db.execute(
-                        "UPDATE mission_state SET status='blocked', parent_execution_id=COALESCE(?, parent_execution_id), active_execution_id=NULL, failed_execution_id=?, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
+                        "UPDATE mission_state SET status='blocked', parent_execution_id=COALESCE(parent_execution_id, ?), active_execution_id=NULL, failed_execution_id=?, resume_state='resume_claim_unavailable', updated_at=? WHERE mission_id=? AND status='resume_reserved' AND active_execution_id=?",
                         (parent_execution_id, execution_id, now, mission_id, execution_id),
                     )
                 self.store.db.commit()
