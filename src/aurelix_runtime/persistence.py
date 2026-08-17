@@ -189,28 +189,42 @@ class RuntimeStore:
         if success:
             self.complete(job_id, result or {"ok": True}, worker_id=worker_id, lease_token=lease_token); return
         now = self._now()
-        with self.lock, self.db:
-            row = self.db.execute("SELECT status, worker_id, lease_token FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-            if row is None: raise KeyError(f"job not found: {job_id}")
-            if row["status"] != "running": raise RuntimeError(f"job {job_id} cannot finish from state {row['status']}")
-            if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token: raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
-            status = "queued" if retry else "failed"
-            self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (status, now, error, job_id, worker_id, lease_token))
-            if not retry: self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute("SELECT status, worker_id, lease_token FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                if row is None: raise KeyError(f"job not found: {job_id}")
+                if row["status"] != "running": raise RuntimeError(f"job {job_id} cannot finish from state {row['status']}")
+                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token:
+                    self.db.rollback(); raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
+                status = "queued" if retry else "failed"
+                cursor = self.db.execute("UPDATE jobs SET status=?, updated_at=?, heartbeat_at=NULL, worker_id=NULL, lease_token=NULL, lease_until=NULL, last_error=? WHERE job_id=? AND status='running' AND worker_id=? AND lease_token=?", (status, now, error, job_id, worker_id, lease_token))
+                if cursor.rowcount != 1:
+                    self.db.rollback(); raise LeaseLostError(f"job {job_id} lost ownership during failure finalization")
+                if not retry:
+                    self.db.execute("INSERT INTO job_results(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO NOTHING", (job_id, json.dumps({"ok": False, "error": error or "unknown error"}, sort_keys=True), now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback(); raise
 
     def record_result(self, job_id: str, result: dict, worker_id: str | None = None, lease_token: str | None = None) -> None:
         """Persist an intermediate checkpoint only while the current lease is valid."""
         now_dt = datetime.now(timezone.utc); now = now_dt.isoformat()
-        with self.lock, self.db:
-            row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-            if row is None: raise KeyError(f"job not found: {job_id}")
-            if row["status"] != "running":
-                existing = self.get_result(job_id)
-                if existing == result and row["status"] in TERMINAL_STATUSES: return
-                raise RuntimeError(f"job {job_id} cannot record a result from state {row['status']}")
-            if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
-                raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
-            self.db.execute("INSERT INTO job_checkpoints(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at", (job_id, json.dumps(result, sort_keys=True), now))
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute("SELECT status, worker_id, lease_token, lease_until FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                if row is None: raise KeyError(f"job not found: {job_id}")
+                if row["status"] != "running":
+                    existing = self.get_result(job_id)
+                    if existing == result and row["status"] in TERMINAL_STATUSES: self.db.commit(); return
+                    raise RuntimeError(f"job {job_id} cannot record a result from state {row['status']}")
+                if worker_id is None or lease_token is None or row["worker_id"] != worker_id or row["lease_token"] != lease_token or not row["lease_until"] or datetime.fromisoformat(row["lease_until"]) <= now_dt:
+                    self.db.rollback(); raise LeaseLostError(f"job {job_id} is no longer owned by this worker")
+                self.db.execute("INSERT INTO job_checkpoints(job_id,result,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET result=excluded.result, created_at=excluded.created_at", (job_id, json.dumps(result, sort_keys=True), now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback(); raise
 
     def fail(self, job_id: str, error: str, retry: bool = True, worker_id: str | None = None, lease_token: str | None = None) -> None:
         self.finish(job_id, False, error, retry=retry, worker_id=worker_id, lease_token=lease_token)
